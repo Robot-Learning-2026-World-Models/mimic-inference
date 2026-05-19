@@ -60,6 +60,18 @@ docker run --rm --gpus all --ipc=host --shm-size=16g -p 8000:8000 \
   --video-fps 10
 ```
 
+## Video Debug Client Env
+
+For laptop-side video debugging from this isolated repo:
+
+```bash
+python3 -m venv .video-client-venv
+source .video-client-venv/bin/activate
+pip install -r requirements-client.txt
+```
+
+Then run `python scripts/video_debug_client.py ...`.
+
 ## Run LeRobot Async
 
 Terminal A on the GPU machine:

@@ -1,4 +1,4 @@
 [submodule "mimic-video"]
 	path = mimic-video
 	url = git@github.com:Robot-Learning-2026-World-Models/mimic-video.git
-	branch = lobotomized
+	branch = lobotomy

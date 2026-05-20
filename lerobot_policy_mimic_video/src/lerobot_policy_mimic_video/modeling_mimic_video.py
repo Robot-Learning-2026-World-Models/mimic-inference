@@ -40,6 +40,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
         self.pipeline = self._load_pipeline(config)
+        self.prompt_embedding = self._load_prompt_embedding(config)
 
     def _apply_deployment_config(self, config: MimicVideoPolicyConfig) -> None:
         dc = self.deployment_config
@@ -70,7 +71,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
         return {"params": []}
 
     def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        prompt = str(kwargs.get("task", None) or kwargs.get("prompt", None) or self.config.prompt)
+        prompt = self.config.prompt
         images = self._image_context_from_batch(batch)
         lowdims = self._state_context_from_batch(batch)
 
@@ -82,6 +83,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
                 input_vid=input_vid,
                 state_B_HO_O=state_tensor,
                 prompt=prompt,
+                prompt_embedding=self.prompt_embedding if prompt == self.config.prompt else None,
                 num_sampling_step=self.config.num_sampling_steps,
                 stop_after_step=self.config.stop_video_denoising_step,
                 seed=self.config.seed,
@@ -187,6 +189,27 @@ class MimicVideoPolicy(PreTrainedPolicy):
         return arr[-self.config.lowdim_horizon :]
 
     @staticmethod
+    def _load_prompt_embedding(config: MimicVideoPolicyConfig) -> torch.Tensor:
+        text_pipe_cfg = make_config()
+        text_pipe_cfg = override(text_pipe_cfg, ["--", f"experiment={config.experiment_name}"])
+        text_pipe_cfg.model.config.video_pipe_config.guardrail_config.enabled = False
+        text_pipe_cfg.model.config.video_pipe_config.state_t = config.video_pipe_state_t
+        text_pipe = Video2WorldPipeline.from_config(
+            config=text_pipe_cfg.model.config.video_pipe_config,
+            dit_path=str(config.video_model_path),
+            use_text_encoder=True,
+            offload_text_encoder=False,
+            device="cuda",
+            torch_dtype=torch.bfloat16,
+            load_ema_to_reg=False,
+        )
+        with torch.no_grad():
+            embedding = text_pipe.encode_prompt(config.prompt).to(device="cuda", dtype=torch.bfloat16)
+        del text_pipe
+        torch.cuda.empty_cache()
+        return embedding
+
+    @staticmethod
     def _load_pipeline(config: MimicVideoPolicyConfig) -> Video2World2ActionPipeline:
         cfg = make_config()
         cfg = override(cfg, ["--", f"experiment={config.experiment_name}"])
@@ -205,6 +228,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
         video2world_pipe = Video2WorldPipeline.from_config(
             config=cfg.model.config.video_pipe_config,
             dit_path=str(config.video_model_path),
+            use_text_encoder=False,
             device="cuda",
             torch_dtype=torch.bfloat16,
             load_ema_to_reg=False,

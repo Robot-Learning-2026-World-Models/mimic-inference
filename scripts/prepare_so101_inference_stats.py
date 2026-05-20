@@ -45,10 +45,15 @@ def main() -> None:
     import hydra
     from cosmos_predict2.configs.defaults.data_action import get_data_config
     from omegaconf import OmegaConf
-    from so101_pipeline import load_yaml, preprocess_if_needed
+    import so101_pipeline
 
-    config = load_yaml(args.config)
-    revision_dir = preprocess_if_needed(config)
+    config = so101_pipeline.load_yaml(args.config)
+
+    # Normalizer stats only depend on action_decoder zarrs. The full SO101
+    # preprocessing entrypoint also generates T5 video/text embedding caches,
+    # which can pull multi-GB text encoder weights and is irrelevant here.
+    so101_pipeline.ensure_t5_embeddings = lambda revision_dir, preprocessing: None
+    revision_dir = so101_pipeline.preprocess_if_needed(config)
     action_data_dir = revision_dir / "action_decoder"
 
     training = _optional_mapping(config.get("training"))

@@ -54,6 +54,8 @@ class MimicVideoPolicyServerConfig(PolicyServerConfig):
     hf_stats_filename: str | None = None
     hf_stats_revision: str | None = None
     policy_device: str = "cuda"
+    prompt: str | None = None
+    task: str | None = None
     num_sampling_steps: int = 35
     stop_video_denoising_step: int = 0
     use_cuda_graphs: bool = True
@@ -65,6 +67,21 @@ def _raw_camera_key(policy_camera_key: str) -> str:
     if policy_camera_key.startswith(prefix):
         return policy_camera_key[len(prefix) :]
     return policy_camera_key.rsplit(".", 1)[-1]
+
+
+def _select_prompt(default_prompt: str, *, task: str | None, prompt: str | None) -> str:
+    if prompt:
+        return prompt
+    task_prompts = {
+        "task1": "the robot arm gently nudges the white object towards the target circle",
+        "task2": "the robot arm gently nudges the white object towards the target circle while avoiding the red cylinder",
+    }
+    if task:
+        key = task.strip().lower().replace("-", "").replace("_", "")
+        if key in task_prompts:
+            return task_prompts[key]
+        return task
+    return default_prompt
 
 
 def _resolve_model_path(
@@ -163,6 +180,11 @@ class MimicVideoPolicyServer(PolicyServer):
             stop_video_denoising_step=self.config.stop_video_denoising_step,
             use_cuda_graphs=self.config.use_cuda_graphs,
             seed=self.config.seed,
+        )
+        policy_config.prompt = _select_prompt(
+            policy_config.prompt,
+            task=self.config.task,
+            prompt=self.config.prompt,
         )
         start = time.perf_counter()
         self.policy = MimicVideoPolicy(policy_config).to(self.device).eval()

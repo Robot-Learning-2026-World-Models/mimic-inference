@@ -74,7 +74,9 @@ TEXT_ENCODER_HF_ALLOW_PATTERN='text_encoder/**'
 CHECKPOINT_CACHE_DIR=/checkpoints
 ```
 
-`commands/lerobot_async_policy_server.sh` prepulls these assets by default before starting gRPC (`PREPULL=1`). Set `PREPULL=0` only when all paths are already local and validated. Dataset/action normalization stats are separate from mimic-video model assets; do not pull them from `MIMIC_VIDEO_HF_REPO_ID` unless you explicitly set `HF_STATS_REPO_ID`.
+`commands/lerobot_async_policy_server.sh` prepulls these assets by default before starting gRPC (`PREPULL=1`). Set `PREPULL=0` only when all paths are already local and validated. Dataset/action normalization stats can come from the same artifact repo, but `HF_STATS_FILENAME` must be explicit because there are separate task stats files.
+
+Prompt selection is server-side. Set `MIMIC_VIDEO_TASK=task1` or `MIMIC_VIDEO_TASK=task2`, or provide `MIMIC_VIDEO_PROMPT="..."`. The selected prompt is embedded once during startup; runtime robot observations do not re-run T5.
 
 ## Training YAML Contract
 

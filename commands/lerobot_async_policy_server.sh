@@ -58,6 +58,12 @@ fi
 if [[ -n "${ACTION_MODEL_HF_REPO_TYPE:-}" ]]; then
   EXTRA_SERVER_ARGS+=(--action_model_hf_repo_type="${ACTION_MODEL_HF_REPO_TYPE}")
 fi
+if [[ -n "${MIMIC_VIDEO_PROMPT:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--prompt="${MIMIC_VIDEO_PROMPT}")
+fi
+if [[ -n "${MIMIC_VIDEO_TASK:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--task="${MIMIC_VIDEO_TASK}")
+fi
 
 if [[ "${PREPULL}" != "0" ]]; then
   PREPULL_ENV_FILE="${PREPULL_ENV_FILE:-/tmp/mimic_video_assets.env}"

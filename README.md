@@ -66,7 +66,15 @@ TEXT_ENCODER_HF_ALLOW_PATTERN='text_encoder/**'
 CHECKPOINT_CACHE_DIR=/checkpoints
 ```
 
-The container runs `scripts/prepull_mimic_video_assets.py` automatically before starting the policy server (`PREPULL=1` by default). This downloads HF checkpoint/text artifacts into `CHECKPOINT_CACHE_DIR` and fails before model startup if a config path points to an unavailable training-machine path. Normalization stats are not pulled from `MIMIC_VIDEO_HF_REPO_ID`; they must be our dataset stats via `STATS_PATH`, `ACTION_DATA_DIR`, or explicit `HF_STATS_REPO_ID`/`HF_STATS_FILENAME`.
+The container runs `scripts/prepull_mimic_video_assets.py` automatically before starting the policy server (`PREPULL=1` by default). This downloads HF checkpoint/text artifacts into `CHECKPOINT_CACHE_DIR` and fails before model startup if a config path points to an unavailable training-machine path. Normalization stats can come from the same artifact repo, but `HF_STATS_FILENAME` must be explicit because there are separate task stats files.
+
+Prompt selection is server-side and embedded once at startup:
+
+```bash
+MIMIC_VIDEO_TASK=task1   # or task2
+# or
+MIMIC_VIDEO_PROMPT="custom prompt text"
+```
 
 See [docs/LEROBOT_ASYNC.md](docs/LEROBOT_ASYNC.md) for the full bring-up checklist.
 

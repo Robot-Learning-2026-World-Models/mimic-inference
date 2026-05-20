@@ -5,7 +5,10 @@ from typing import Any
 import numpy as np
 import torch
 from einops import rearrange
-from lerobot.policies import PreTrainedPolicy
+try:
+    from lerobot.policies import PreTrainedPolicy
+except ImportError:
+    from lerobot.policies.pretrained import PreTrainedPolicy
 from PIL import Image
 
 from cosmos_predict2.configs.config import make_config

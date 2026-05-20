@@ -18,7 +18,6 @@ from lerobot.async_inference.helpers import RemotePolicyConfig, TimedAction, Tim
 from lerobot.async_inference.policy_server import PolicyServer
 from lerobot.transport import services_pb2
 from lerobot.transport import services_pb2_grpc
-from lerobot.types import PolicyAction
 
 from .configuration_mimic_video import MimicVideoPolicyConfig
 from .modeling_mimic_video import MimicVideoPolicy
@@ -228,7 +227,7 @@ class MimicVideoPolicyServer(PolicyServer):
         prepare_time = time.perf_counter() - start_prepare
 
         start_inference = time.perf_counter()
-        action_tensor: PolicyAction = self._get_action_chunk(observation)
+        action_tensor = self._get_action_chunk(observation)
         inference_time = time.perf_counter() - start_inference
         if action_tensor.ndim != 3:
             raise RuntimeError(f"Expected action chunk shape (B, H, D), got {tuple(action_tensor.shape)}")

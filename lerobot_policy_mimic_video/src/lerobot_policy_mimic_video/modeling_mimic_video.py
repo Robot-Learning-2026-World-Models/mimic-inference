@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -193,6 +194,21 @@ class MimicVideoPolicy(PreTrainedPolicy):
 
     @staticmethod
     def _load_prompt_embedding(config: MimicVideoPolicyConfig) -> torch.Tensor:
+        prompt_embedding_path = os.environ.get("MIMIC_VIDEO_PROMPT_EMBEDDING_PATH")
+        if prompt_embedding_path:
+            embedding = torch.load(prompt_embedding_path, map_location="cuda")
+            if isinstance(embedding, dict):
+                for key in ("prompt_embedding", "embedding", "obs/language_embedding"):
+                    if key in embedding:
+                        embedding = embedding[key]
+                        break
+            if not isinstance(embedding, torch.Tensor):
+                raise TypeError(f"Prompt embedding at {prompt_embedding_path} did not resolve to a tensor.")
+            return embedding.to(device="cuda", dtype=torch.bfloat16)
+
+        if os.environ.get("MIMIC_VIDEO_ZERO_PROMPT_EMBEDDING") == "1":
+            return torch.zeros((1, 512, 1024), device="cuda", dtype=torch.bfloat16)
+
         text_pipe_cfg = make_config()
         text_pipe_cfg = override(text_pipe_cfg, ["--", f"experiment={config.experiment_name}"])
         text_pipe_cfg.model.config.video_pipe_config.guardrail_config.enabled = False

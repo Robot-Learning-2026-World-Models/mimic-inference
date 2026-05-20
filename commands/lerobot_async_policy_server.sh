@@ -71,6 +71,9 @@ if [[ "${PREPULL}" != "0" ]]; then
   python scripts/prepull_mimic_video_assets.py --write-env="${PREPULL_ENV_FILE}"
   # shellcheck disable=SC1090
   source "${PREPULL_ENV_FILE}"
+  if [[ -n "${MIMIC_VIDEO_PROMPT_EMBEDDING_PATH:-}" ]]; then
+    export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH
+  fi
   EXTRA_SERVER_ARGS+=(--video_model_path="${VIDEO_MODEL_PATH}")
   EXTRA_SERVER_ARGS+=(--action_model_path="${ACTION_MODEL_PATH}")
   EXTRA_SERVER_ARGS+=(--stats_path="${STATS_PATH}")

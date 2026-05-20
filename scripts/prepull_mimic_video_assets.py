@@ -54,6 +54,10 @@ def _stats_repo_id() -> str | None:
 
 
 def _prepull_text_encoder(*, cache_dir: Path) -> Path | None:
+    should_prepull = (_env("PREPULL_TEXT_ENCODER") or "").lower() in {"1", "true", "yes", "on"}
+    if not should_prepull:
+        return None
+
     repo_id = _env("TEXT_ENCODER_HF_REPO_ID") or _env("MIMIC_VIDEO_HF_REPO_ID") or DEFAULT_DEPLOY_REPO
     allow_pattern = _env("TEXT_ENCODER_HF_ALLOW_PATTERN") or _env("TEXT_ENCODER_HF_FILENAME") or "text_encoder/**"
     revision = _env("TEXT_ENCODER_HF_REVISION")
@@ -70,6 +74,20 @@ def _prepull_text_encoder(*, cache_dir: Path) -> Path | None:
         kwargs["allow_patterns"] = [allow_pattern]
     snapshot_download(**kwargs)
     return target_dir.resolve()
+
+
+def _prepull_prompt_embedding(*, cache_dir: Path) -> Path | None:
+    filename = _env("PROMPT_EMBEDDING_HF_FILENAME") or _env("MIMIC_VIDEO_PROMPT_EMBEDDING_HF_FILENAME")
+    if not filename:
+        return _path_env("MIMIC_VIDEO_PROMPT_EMBEDDING_PATH")
+    target = _path_env("MIMIC_VIDEO_PROMPT_EMBEDDING_PATH") or (cache_dir / "prompt_embeddings" / Path(filename).name)
+    return maybe_download_file(
+        path=target,
+        hf_repo_id=_env("PROMPT_EMBEDDING_HF_REPO_ID") or _env("MIMIC_VIDEO_HF_REPO_ID") or DEFAULT_DEPLOY_REPO,
+        hf_filename=filename,
+        hf_revision=_env("PROMPT_EMBEDDING_HF_REVISION"),
+        repo_type=_env("PROMPT_EMBEDDING_HF_REPO_TYPE") or "model",
+    ).resolve()
 
 
 def _resolve_or_download(
@@ -159,6 +177,7 @@ def main() -> None:
         repo_type=_env("ACTION_MODEL_HF_REPO_TYPE") or "model",
     )
     text_encoder_path = _prepull_text_encoder(cache_dir=cache_dir)
+    prompt_embedding_path = _prepull_prompt_embedding(cache_dir=cache_dir)
 
     lines = [
         f"VIDEO_MODEL_PATH={video_path}",
@@ -167,6 +186,8 @@ def main() -> None:
     ]
     if text_encoder_path is not None:
         lines.append(f"TEXT_ENCODER_CACHE_DIR={text_encoder_path}")
+    if prompt_embedding_path is not None:
+        lines.append(f"MIMIC_VIDEO_PROMPT_EMBEDDING_PATH={prompt_embedding_path}")
     print("\n".join(lines))
     if args.write_env is not None:
         args.write_env.parent.mkdir(parents=True, exist_ok=True)

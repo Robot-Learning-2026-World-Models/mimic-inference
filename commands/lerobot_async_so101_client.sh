@@ -17,9 +17,40 @@ CHUNK_SIZE_THRESHOLD="${CHUNK_SIZE_THRESHOLD:-1.0}"
 AGGREGATE_FN_NAME="${AGGREGATE_FN_NAME:-latest_only}"
 POLICY_DEVICE="${POLICY_DEVICE:-cuda}"
 
+if [[ -n "${PYTHON:-}" ]]; then
+  PYTHON_CMD=("${PYTHON}")
+elif command -v uv >/dev/null 2>&1 && [[ -f "${PWD}/mimic-video/model/pyproject.toml" ]]; then
+  UV_PROJECT_DIR="${UV_PROJECT_DIR:-${PWD}/mimic-video/model}"
+  UV_EXTRA="${UV_EXTRA:-cu126}"
+  UV_PYTHON="${UV_PROJECT_DIR}/.venv/bin/python"
+  if [[ ! -x "${UV_PYTHON}" || "${UV_SYNC:-0}" == "1" ]]; then
+    UV_SYNC_CMD=(uv sync --project "${UV_PROJECT_DIR}")
+    if [[ -n "${UV_EXTRA}" ]]; then
+      UV_SYNC_CMD+=(--extra "${UV_EXTRA}")
+    fi
+    "${UV_SYNC_CMD[@]}"
+  fi
+  if [[ "${UV_WITH_LEROBOT:-1}" == "1" ]] && ! "${UV_PYTHON}" -c 'import lerobot' >/dev/null 2>&1; then
+    UV_LEROBOT_INSTALL_CMD=(
+      uv pip install
+      --python "${UV_PYTHON}"
+      --torch-backend cu126
+      "lerobot[async]"
+      "torch==2.6.0"
+      "torchvision==0.21.0"
+    )
+    "${UV_LEROBOT_INSTALL_CMD[@]}"
+  fi
+  PYTHON_CMD=("${UV_PYTHON}")
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_CMD=(python)
+else
+  PYTHON_CMD=(python3)
+fi
+
 export PYTHONPATH="${PWD}/lerobot_policy_mimic_video/src:${PYTHONPATH:-}"
 
-exec python -m lerobot_policy_mimic_video.grpc_robot_client \
+exec "${PYTHON_CMD[@]}" -m lerobot_policy_mimic_video.grpc_robot_client \
   --server_address="${SERVER_ADDRESS}" \
   --robot.type=so101_follower \
   --robot.port="${ROBOT_PORT}" \

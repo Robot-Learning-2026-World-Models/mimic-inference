@@ -1,6 +1,7 @@
 import logging
 import pickle  # nosec
 import time
+import traceback
 from concurrent import futures
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -178,7 +179,7 @@ class MimicVideoPolicyServer(PolicyServer):
             n_action_steps=policy_specs.actions_per_chunk,
             input_frequency=self.config.fps,
             num_sampling_steps=self.config.num_sampling_steps,
-            stop_video_denoising_step=self.config.stop_video_denoising_step,
+            stop_video_denoising_step=self.config.stop_video_denoising_step or self.config.num_sampling_steps,
             denoised_video_save_dir=self.config.denoised_video_save_dir,
             denoised_video_save_every_n=self.config.denoised_video_save_every_n,
             denoised_video_save_fps=self.config.denoised_video_save_fps,
@@ -238,7 +239,11 @@ class MimicVideoPolicyServer(PolicyServer):
         prepare_time = time.perf_counter() - start_prepare
 
         start_inference = time.perf_counter()
-        action_tensor = self._get_action_chunk(observation, observation_timestep=observation_t.get_timestep())
+        try:
+            action_tensor = self._get_action_chunk(observation, observation_timestep=observation_t.get_timestep())
+        except Exception:
+            self.logger.error("Mimic-video inference failed:\n%s", traceback.format_exc())
+            raise
         inference_time = time.perf_counter() - start_inference
         if action_tensor.ndim != 3:
             raise RuntimeError(f"Expected action chunk shape (B, H, D), got {tuple(action_tensor.shape)}")

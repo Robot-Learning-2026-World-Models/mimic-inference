@@ -14,10 +14,35 @@ DENOISED_VIDEO_SAVE_PREFIX="${DENOISED_VIDEO_SAVE_PREFIX:-debug_smoke_$(date +%Y
 DENOISED_VIDEO_VERIFY_GLOB="${DENOISED_VIDEO_VERIFY_GLOB:-*_obs*_pred*.mp4}"
 SMOKE_SERVER_LOG="${SMOKE_SERVER_LOG:-${DENOISED_VIDEO_SAVE_DIR}/${DENOISED_VIDEO_SAVE_PREFIX}_policy_server.log}"
 
-if command -v python >/dev/null 2>&1; then
-  PYTHON_BIN="${PYTHON:-python}"
+if [[ -n "${PYTHON:-}" ]]; then
+  PYTHON_CMD=("${PYTHON}")
+elif command -v uv >/dev/null 2>&1 && [[ -f "${PWD}/mimic-video/model/pyproject.toml" ]]; then
+  UV_PROJECT_DIR="${UV_PROJECT_DIR:-${PWD}/mimic-video/model}"
+  UV_EXTRA="${UV_EXTRA:-cu126}"
+  UV_PYTHON="${UV_PROJECT_DIR}/.venv/bin/python"
+  if [[ ! -x "${UV_PYTHON}" || "${UV_SYNC:-0}" == "1" ]]; then
+    UV_SYNC_CMD=(uv sync --project "${UV_PROJECT_DIR}")
+    if [[ -n "${UV_EXTRA}" ]]; then
+      UV_SYNC_CMD+=(--extra "${UV_EXTRA}")
+    fi
+    "${UV_SYNC_CMD[@]}"
+  fi
+  if [[ "${UV_WITH_LEROBOT:-1}" == "1" ]] && ! "${UV_PYTHON}" -c 'import lerobot' >/dev/null 2>&1; then
+    UV_LEROBOT_INSTALL_CMD=(
+      uv pip install
+      --python "${UV_PYTHON}"
+      --torch-backend cu126
+      "lerobot[async]"
+      "torch==2.6.0"
+      "torchvision==0.21.0"
+    )
+    "${UV_LEROBOT_INSTALL_CMD[@]}"
+  fi
+  PYTHON_CMD=("${UV_PYTHON}")
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_CMD=(python)
 else
-  PYTHON_BIN="${PYTHON:-python3}"
+  PYTHON_CMD=(python3)
 fi
 
 export PYTHONPATH="${PWD}/lerobot_policy_mimic_video/src:${PWD}/mimic-video/model:${PYTHONPATH:-}"
@@ -73,7 +98,7 @@ else
   echo "Expecting denoised videos in ${DENOISED_VIDEO_SAVE_DIR} with prefix ${DENOISED_VIDEO_SAVE_PREFIX}"
 fi
 
-if ! "${PYTHON_BIN}" scripts/smoke_mimic_video_grpc_client.py \
+if ! "${PYTHON_CMD[@]}" scripts/smoke_mimic_video_grpc_client.py \
   --server-address="${SERVER_ADDRESS}" \
   --timeout="${SMOKE_TIMEOUT}" \
   "$@"; then

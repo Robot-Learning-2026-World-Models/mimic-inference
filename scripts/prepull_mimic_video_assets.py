@@ -158,7 +158,9 @@ def main() -> None:
         revision=_env("ACTION_MODEL_HF_REVISION"),
         repo_type=_env("ACTION_MODEL_HF_REPO_TYPE") or "model",
     )
-    text_encoder_path = _prepull_text_encoder(cache_dir=cache_dir)
+    text_encoder_path = None
+    if _env("PREPULL_TEXT_ENCODER") == "1":
+        text_encoder_path = _prepull_text_encoder(cache_dir=cache_dir)
 
     lines = [
         f"VIDEO_MODEL_PATH={video_path}",

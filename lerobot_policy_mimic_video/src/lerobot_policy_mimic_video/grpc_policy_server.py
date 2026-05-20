@@ -22,6 +22,7 @@ from lerobot.types import PolicyAction
 
 from .configuration_mimic_video import MimicVideoPolicyConfig
 from .modeling_mimic_video import MimicVideoPolicy
+from .training_config import build_deployment_config, maybe_download_file
 
 try:
     from lerobot.async_inference.helpers import make_lerobot_observation as _raw_to_lerobot_observation
@@ -37,6 +38,15 @@ RAW_STATE_KEY = "observation.state"
 class MimicVideoPolicyServerConfig(PolicyServerConfig):
     video_model_path: Path | None = None
     action_model_path: Path | None = None
+    video_model_hf_repo_id: str | None = None
+    video_model_hf_filename: str | None = None
+    video_model_hf_revision: str | None = None
+    video_model_hf_repo_type: str = "model"
+    action_model_hf_repo_id: str | None = None
+    action_model_hf_filename: str | None = None
+    action_model_hf_revision: str | None = None
+    action_model_hf_repo_type: str = "model"
+    checkpoint_cache_dir: Path = Path("/checkpoints")
     training_config: Path | None = None
     stats_path: Path | None = None
     action_data_dir: Path | None = None
@@ -55,6 +65,34 @@ def _raw_camera_key(policy_camera_key: str) -> str:
     if policy_camera_key.startswith(prefix):
         return policy_camera_key[len(prefix) :]
     return policy_camera_key.rsplit(".", 1)[-1]
+
+
+def _resolve_model_path(
+    *,
+    explicit_path: Path | None,
+    config_path: Path | None,
+    cache_dir: Path,
+    hf_repo_id: str | None,
+    hf_filename: str | None,
+    hf_revision: str | None,
+    hf_repo_type: str,
+    label: str,
+) -> Path:
+    path = explicit_path or config_path
+    if path is None and hf_filename:
+        path = cache_dir / hf_filename
+    if path is None:
+        raise ValueError(
+            f"{label} checkpoint is required. Set {label.upper()}_MODEL_PATH, "
+            f"put it in the training YAML, or provide {label.upper()}_MODEL_HF_REPO_ID/FILENAME."
+        )
+    return maybe_download_file(
+        path=path.expanduser(),
+        hf_repo_id=hf_repo_id,
+        hf_filename=hf_filename,
+        hf_revision=hf_revision,
+        repo_type=hf_repo_type,
+    ).resolve()
 
 
 class MimicVideoPolicyServer(PolicyServer):
@@ -82,11 +120,39 @@ class MimicVideoPolicyServer(PolicyServer):
         self.policy_type = policy_specs.policy_type
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
-        policy_config = MimicVideoPolicyConfig(
-            video_model_path=self.config.video_model_path,
-            action_model_path=self.config.action_model_path,
+        deployment = build_deployment_config(
+            training_config=self.config.training_config,
             stats_path=self.config.stats_path,
             action_data_dir=self.config.action_data_dir,
+            hf_stats_repo_id=self.config.hf_stats_repo_id,
+            hf_stats_filename=self.config.hf_stats_filename,
+            hf_stats_revision=self.config.hf_stats_revision,
+        )
+        video_model_path = _resolve_model_path(
+            explicit_path=self.config.video_model_path,
+            config_path=deployment.video_model_path,
+            cache_dir=self.config.checkpoint_cache_dir,
+            hf_repo_id=self.config.video_model_hf_repo_id,
+            hf_filename=self.config.video_model_hf_filename,
+            hf_revision=self.config.video_model_hf_revision,
+            hf_repo_type=self.config.video_model_hf_repo_type,
+            label="video",
+        )
+        action_model_path = _resolve_model_path(
+            explicit_path=self.config.action_model_path,
+            config_path=deployment.action_model_path,
+            cache_dir=self.config.checkpoint_cache_dir,
+            hf_repo_id=self.config.action_model_hf_repo_id,
+            hf_filename=self.config.action_model_hf_filename,
+            hf_revision=self.config.action_model_hf_revision,
+            hf_repo_type=self.config.action_model_hf_repo_type,
+            label="action",
+        )
+        policy_config = MimicVideoPolicyConfig(
+            video_model_path=video_model_path,
+            action_model_path=action_model_path,
+            stats_path=deployment.stats_path,
+            action_data_dir=None,
             hf_stats_repo_id=self.config.hf_stats_repo_id,
             hf_stats_filename=self.config.hf_stats_filename,
             hf_stats_revision=self.config.hf_stats_revision,

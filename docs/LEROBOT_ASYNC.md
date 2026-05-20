@@ -61,6 +61,21 @@ commands/lerobot_async_so101_client.sh
 
 Use `STATS_PATH` instead of `ACTION_DATA_DIR` when you have a specific statistics JSON. To download stats from Hugging Face at startup, set `STATS_PATH` to the desired local path and provide `HF_STATS_REPO_ID`, `HF_STATS_FILENAME`, and optionally `HF_STATS_REVISION`.
 
+Checkpoint resolution happens on the policy server. Explicit `VIDEO_MODEL_PATH` / `ACTION_MODEL_PATH` wins. If unset, the server uses `training.action_decoder.model.video_dit_path` and `action_dit_path` from `TRAINING_CONFIG`. If those paths are missing or unavailable, provide HF download envs. By default, `MIMIC_VIDEO_HF_REPO_ID=rl26-world-models/mimic-finetune` is used as the shared repo for video/action/text assets:
+
+```bash
+VIDEO_MODEL_HF_REPO_ID=...
+VIDEO_MODEL_HF_FILENAME=...
+VIDEO_MODEL_HF_REVISION=...
+ACTION_MODEL_HF_REPO_ID=...
+ACTION_MODEL_HF_FILENAME=...
+ACTION_MODEL_HF_REVISION=...
+TEXT_ENCODER_HF_ALLOW_PATTERN='text_encoder/**'
+CHECKPOINT_CACHE_DIR=/checkpoints
+```
+
+`commands/lerobot_async_policy_server.sh` prepulls these assets by default before starting gRPC (`PREPULL=1`). Set `PREPULL=0` only when all paths are already local and validated. Dataset/action normalization stats are separate from mimic-video model assets; do not pull them from `MIMIC_VIDEO_HF_REPO_ID` unless you explicitly set `HF_STATS_REPO_ID`.
+
 ## Training YAML Contract
 
 `TRAINING_CONFIG` is the source of truth for deployment preprocessing. The plugin reads:

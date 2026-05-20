@@ -4,41 +4,23 @@ LeRobot async deployment wrapper for `mimic-video` on SO101.
 
 This repo keeps deployment separate from the training/research repo and vendors `mimic-video` as a git submodule. The submodule should track `video_finetune_improvements`.
 
-## Clone
-
-```bash
-git clone <this-repo-url>
-cd so101-mimic-video-deploy
-git submodule update --init --recursive
-git -C mimic-video checkout video_finetune_improvements
-```
-
-## Install On The GPU Policy Server
-
-```bash
-cd mimic-video/model
-uv sync --extra cu126
-source .venv/bin/activate
-cd ../..
-
-uv pip install "lerobot[async]"
-uv pip install -e lerobot_policy_mimic_video
-```
-
-The LeRobot policy loads `mimic-video/model` directly and reads the same SO101 training YAML used for training. For the current dual-task video backbone, use:
-
-```bash
-TRAINING_CONFIG=$PWD/mimic-video/configs/so101-task1-mini-v1-birdview/video_finetune_subsampled_dual_task.yaml
-```
-
-That path is swappable, but the replacement YAML must carry the matching `preprocessing.image` fields and live in a checkout with the matching `model/cosmos_predict2/configs/dataloading/policy_io/so101.yaml`.
-
 ## Container
 
 Build the robot action deployment image:
 
 ```bash
 docker build -t so101-mimic-video-deploy .
+```
+
+Pull the dataset stats:
+```
+docker run --rm --gpus all --ipc=host --shm-size=16g \
+    -v $PWD/hf-cache:/root/.cache/huggingface \
+    -v $PWD/data:/workspace/so101-mimic-video-deploy/data \
+    -e HF_HOME=/root/.cache/huggingface \
+    so101-mimic-video-deploy \
+    python scripts/prepare_so101_inference_stats.py \
+      --config mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml
 ```
 
 Run the LeRobot async policy server on the GPU machine:
@@ -66,6 +48,25 @@ commands/lerobot_async_so101_client.sh
 ```
 
 Pass `STATS_PATH=/abs/path/to/statistics.json` instead of `ACTION_DATA_DIR` if you already know the exact statistics file. If the file is on Hugging Face, set `STATS_PATH` to the local destination plus `HF_STATS_REPO_ID`, `HF_STATS_FILENAME`, and optionally `HF_STATS_REVISION`; the plugin downloads it before loading the normalizer.
+
+Checkpoints are resolved by the policy server in this order:
+
+1. `VIDEO_MODEL_PATH` / `ACTION_MODEL_PATH`
+2. `training.action_decoder.model.video_dit_path` / `action_dit_path` in `TRAINING_CONFIG`
+3. Hugging Face download envs. By default, `MIMIC_VIDEO_HF_REPO_ID=rl26-world-models/mimic-finetune` is used as the shared repo for video/action/text assets:
+
+```bash
+VIDEO_MODEL_HF_REPO_ID=...
+VIDEO_MODEL_HF_FILENAME=...
+VIDEO_MODEL_HF_REVISION=...
+ACTION_MODEL_HF_REPO_ID=...
+ACTION_MODEL_HF_FILENAME=...
+ACTION_MODEL_HF_REVISION=...
+TEXT_ENCODER_HF_ALLOW_PATTERN='text_encoder/**'
+CHECKPOINT_CACHE_DIR=/checkpoints
+```
+
+The container runs `scripts/prepull_mimic_video_assets.py` automatically before starting the policy server (`PREPULL=1` by default). This downloads HF checkpoint/text artifacts into `CHECKPOINT_CACHE_DIR` and fails before model startup if a config path points to an unavailable training-machine path. Normalization stats are not pulled from `MIMIC_VIDEO_HF_REPO_ID`; they must be our dataset stats via `STATS_PATH`, `ACTION_DATA_DIR`, or explicit `HF_STATS_REPO_ID`/`HF_STATS_FILENAME`.
 
 See [docs/LEROBOT_ASYNC.md](docs/LEROBOT_ASYNC.md) for the full bring-up checklist.
 

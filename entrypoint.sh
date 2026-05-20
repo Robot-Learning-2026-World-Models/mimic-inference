@@ -8,6 +8,9 @@ export PYTHONPATH="/workspace/so101-mimic-video-deploy/mimic-video/model:${PYTHO
 mode="${1:-policy-server}"
 shift || true
 case "${mode}" in
+  prepull)
+    exec python scripts/prepull_mimic_video_assets.py "$@"
+    ;;
   policy-server)
     exec commands/lerobot_async_policy_server.sh "$@"
     ;;

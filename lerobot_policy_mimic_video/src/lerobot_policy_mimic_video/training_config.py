@@ -50,6 +50,8 @@ class MimicVideoDeploymentConfig:
     action_dim: int
     max_horizon: int
     action_denoising_steps: int
+    video_model_path: Path | None
+    action_model_path: Path | None
     image_horizon: int
     lowdim_horizon: int
     action_horizon: int
@@ -142,6 +144,34 @@ def maybe_download_stats(*, stats_path: Path, hf_repo_id: str | None, hf_filenam
     return stats_path
 
 
+def maybe_download_file(
+    *,
+    path: Path,
+    hf_repo_id: str | None,
+    hf_filename: str | None,
+    hf_revision: str | None,
+    repo_type: str | None = "model",
+) -> Path:
+    if path.exists():
+        return path
+    if not hf_repo_id or not hf_filename:
+        raise FileNotFoundError(f"path does not exist and no HF source was provided: {path}")
+
+    from huggingface_hub import hf_hub_download
+
+    downloaded = Path(
+        hf_hub_download(
+            repo_id=hf_repo_id,
+            filename=hf_filename,
+            repo_type=repo_type,
+            revision=hf_revision or "main",
+        )
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(downloaded.read_bytes())
+    return path
+
+
 def _derive_video_pipe_state_t(policy_io: PolicyIOConfig) -> int:
     video_pixel_horizon = policy_io.image_horizon + policy_io.image_action_horizon
     if (video_pixel_horizon - 1) % 4 != 0:
@@ -158,6 +188,15 @@ def _require_frequency(value: int | None, name: str) -> int:
     if int(value) <= 0:
         raise ValueError(f"{name} must be positive, got {value}.")
     return int(value)
+
+
+def _optional_checkpoint_path(value: Any) -> Path | None:
+    if value is None:
+        return None
+    path = str(value).strip()
+    if not path:
+        return None
+    return Path(path).expanduser()
 
 
 def build_deployment_config(
@@ -239,6 +278,8 @@ def build_deployment_config(
         action_dim=action_dim,
         max_horizon=int(network_cfg.get("max_horizon", policy_io.action_horizon + 1)),
         action_denoising_steps=int(scheduler_cfg.get("num_denoising_steps", 10)),
+        video_model_path=_optional_checkpoint_path(model_cfg.get("video_dit_path")),
+        action_model_path=_optional_checkpoint_path(model_cfg.get("action_dit_path") or action_cfg.get("checkpoint_path")),
         image_horizon=policy_io.image_horizon,
         lowdim_horizon=policy_io.lowdim_horizon,
         action_horizon=policy_io.action_horizon,

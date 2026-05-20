@@ -28,7 +28,7 @@ COPY . .
 
 WORKDIR /workspace/so101-mimic-video-deploy/mimic-video/model
 RUN uv sync --extra cu126
-RUN . .venv/bin/activate && uv pip install "lerobot[async]" && uv pip install -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
+RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]" && uv pip install -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
 
 WORKDIR /workspace/so101-mimic-video-deploy
 ENV PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/bin:${PATH}" \

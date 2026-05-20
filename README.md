@@ -79,6 +79,29 @@ docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
       --output-dir /checkpoints/prompt_embeddings
 ```
 
+If the prompt embedding is a repo-local pickle, mount it directly instead of
+placing it under `/checkpoints`:
+```
+docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
+    -p 8080:8080 \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
+    -v $PWD/mimic-video/configs/so101:/workspace/so101-mimic-video-deploy/mimic-video/configs/so101:ro \
+    -v $PWD/checkpoints:/checkpoints \
+    -v $PWD/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle:/prompt_embedding.pickle:ro \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e VIDEO_MODEL_PATH=/checkpoints/iter_000002800_fused.pt \
+    -e ACTION_MODEL_PATH=/checkpoints/iter_000001850.pt \
+    -e STATS_PATH=/checkpoints/dataset_statistics/so101_task1_2_stats.json \
+    -e MIMIC_VIDEO_PROMPT_EMBEDDING_PATH=/prompt_embedding.pickle \
+    -e MIMIC_VIDEO_TASK=task1 \
+    -e PREPULL=0 \
+    -e FPS=30 \
+    so101-mimic-video-deploy:blackwell \
+    policy-server
+```
+
 Pull tokenizer since I fucked up:
 ```
 docker run --rm \

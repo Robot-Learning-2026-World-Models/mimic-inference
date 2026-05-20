@@ -44,6 +44,25 @@ docker run --rm --gpus all --ipc=host --shm-size=32g \
     python scripts/prepull_mimic_video_assets.py
 ```
 
+Prepull skips T5 by default. Only opt into the text encoder if you need to generate prompt embeddings on the host:
+```
+PREPULL_TEXT_ENCODER=1
+```
+
+Generate prompt embeddings once, then use those at server startup instead of loading T5:
+```
+docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
+    -v $PWD/checkpoints:/checkpoints \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
+    -v $PWD/scripts/cache_mimic_video_prompt_embedding.py:/workspace/so101-mimic-video-deploy/scripts/cache_mimic_video_prompt_embedding.py:ro \
+    so101-mimic-video-deploy \
+    python scripts/cache_mimic_video_prompt_embedding.py \
+      --tasks task1 task2 \
+      --prompts "alternate language prompt text here" \
+      --text-encoder-path /checkpoints/text_encoder/text_encoder/t5-11b \
+      --output-dir /checkpoints/prompt_embeddings
+```
+
 Pull tokenizer since I fucked up:
 ```
 docker run --rm \
@@ -73,11 +92,17 @@ docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
     -e VIDEO_MODEL_PATH=/checkpoints/iter_000002800_fused.pt \
     -e ACTION_MODEL_PATH=/checkpoints/iter_000001900.pt \
     -e STATS_PATH=/checkpoints/dataset_statistics/so101_task1_2_stats.json \
+    -e MIMIC_VIDEO_PROMPT_EMBEDDING_PATH=/checkpoints/prompt_embeddings/task1.pt \
     -e MIMIC_VIDEO_TASK=task1 \
     -e PREPULL=0 \
     -e FPS=30 \
     so101-mimic-video-deploy \
     policy-server
+```
+
+Smoke test client:
+```
+docker run --rm --network host     -v $PWD/scripts/smoke_mimic_video_grpc_client.py:/workspace/so101-mimic-video-deploy/scripts/smoke_mimic_video_grpc_client.py:ro     -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro     so101-mimic-video-deploy     python scripts/smoke_mimic_video_grpc_client.py       --server-address 127.0.0.1:8080       --raw-image-horizon 13       --actions-per-chunk 3       --timeout 600
 ```
 
 Run the LeRobot async policy server on the GPU machine:

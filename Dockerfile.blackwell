@@ -1,0 +1,78 @@
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    UV_CACHE_DIR=/root/.cache/uv \
+    PYTHONUNBUFFERED=1 \
+    TOKENIZERS_PARALLELISM=false \
+    CUDA_DEVICE_MAX_CONNECTIONS=1 \
+    NVTE_FUSED_ATTN=0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    ffmpeg \
+    git \
+    libglib2.0-0 \
+    libgl1 \
+    libvulkan1 \
+    python3.10 \
+    python3.10-dev \
+    python3.10-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /workspace/so101-mimic-video-deploy
+COPY . .
+
+WORKDIR /workspace/so101-mimic-video-deploy/mimic-video/model
+
+# Install all cosmos deps from the original index. torch 2.6.0 and the pre-built
+# CUDA extensions installed here lack sm_120 kernels — replaced below.
+RUN uv sync --extra cu126
+
+# torch 2.8.0 is the first release with sm_120 (RTX 5090 / Blackwell consumer) kernels.
+RUN .venv/bin/pip install torch==2.8.0 torchvision==0.23.0 \
+        --index-url https://download.pytorch.org/whl/cu128 \
+        --force-reinstall
+
+# Compile source-built extensions only for sm_120 to keep build time manageable.
+ENV TORCH_CUDA_ARCH_LIST="12.0" \
+    MAX_JOBS=16
+
+# flash-attn: use windreamer's pre-built FA3 wheels (sm_120 included).
+# FA3's flash_attn_interface.py installs at the top of site-packages rather than
+# inside the flash_attn/ package that cosmos imports from, so we overwrite that
+# file after installing to keep 'from flash_attn.flash_attn_interface import ...' working.
+RUN .venv/bin/pip install --no-deps --force-reinstall \
+        "https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.05.20-072445f/flash_attn_3-3.0.0%2B20260519.cu128torch280cxx11abitrue.8a8b2f-cp39-abi3-linux_x86_64.whl" && \
+    .venv/bin/python - <<'EOF'
+import site, shutil, os
+sp = next(p for p in site.getsitepackages() if "site-packages" in p)
+shutil.copy(os.path.join(sp, "flash_attn_interface.py"),
+            os.path.join(sp, "flash_attn", "flash_attn_interface.py"))
+EOF
+
+# natten: source-only on PyPI; bump to latest 0.21.x patch.
+RUN .venv/bin/pip install natten==0.21.6 --no-binary natten --no-build-isolation --force-reinstall
+
+# transformer-engine: 2.x on PyPI includes Blackwell support.
+RUN .venv/bin/pip install transformer-engine --force-reinstall
+
+# apex: not on PyPI, build from source.
+RUN .venv/bin/pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
+        --config-settings "--build-option=--cpp_ext" \
+        --config-settings "--build-option=--cuda_ext" \
+        "git+https://github.com/NVIDIA/apex"
+
+RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]" && uv pip install -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
+
+WORKDIR /workspace/so101-mimic-video-deploy
+ENV PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/bin:${PATH}" \
+    PYTHONPATH="/workspace/so101-mimic-video-deploy/mimic-video/model"
+
+EXPOSE 8000 8080
+
+ENTRYPOINT ["/workspace/so101-mimic-video-deploy/entrypoint.sh"]
+CMD ["policy-server"]

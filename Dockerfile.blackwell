@@ -1,9 +1,5 @@
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
-ARG CUDA_ARCH_LIST="12.0"
-ARG NVTE_CUDA_ARCHS="120"
-ARG MAX_JOBS=4
-
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_CACHE_DIR=/root/.cache/uv \
     PIP_NO_CACHE_DIR=1 \
@@ -11,12 +7,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TOKENIZERS_PARALLELISM=false \
     CUDA_DEVICE_MAX_CONNECTIONS=1 \
     NVTE_FUSED_ATTN=0 \
-    NVTE_CUDA_ARCHS="${NVTE_CUDA_ARCHS}" \
+    TORCH_CUDA_ARCH_LIST="12.0" \
+    NVTE_CUDA_ARCHS="120" \
     NVTE_BUILD_THREADS_PER_JOB=1 \
-    TORCH_CUDA_ARCH_LIST="${CUDA_ARCH_LIST}" \
-    NATTEN_CUDA_ARCH="${CUDA_ARCH_LIST}" \
-    NATTEN_N_WORKERS="${MAX_JOBS}" \
-    MAX_JOBS="${MAX_JOBS}"
+    MAX_JOBS=4
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -43,22 +37,23 @@ COPY . .
 
 WORKDIR /workspace/so101-mimic-video-deploy/mimic-video/model
 
-# Install base Cosmos deps only. The cu126 extra is intentionally avoided here
-# because its torch/extension wheels do not contain Blackwell kernels.
+# Install base Cosmos deps only. The cu126 extra installs torch 2.6.0 and
+# CUDA-extension wheels that do not support RTX 5090 / sm_120.
 RUN uv sync
 RUN uv pip install --python .venv/bin/python pip
-RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]"
-RUN .venv/bin/python -m pip install --no-deps pybind11==2.13.6 wheel==0.45.1
 
-# torch 2.8.0 provides CUDA 12.8 wheels with Blackwell support.
+# Install app/runtime deps before pinning the CUDA 12.8 torch stack. Later local
+# installs use --no-deps so they cannot replace torch.
+RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]"
+
+# torch 2.8.0 provides CUDA 12.8 wheels with sm_120 support.
 RUN .venv/bin/python -m pip install torch==2.8.0 torchvision==0.23.0 \
         --index-url https://download.pytorch.org/whl/cu128 \
         --force-reinstall
 
-# flash-attn: use windreamer's pre-built FA3 wheels (sm_120 included).
-# FA3's flash_attn_interface.py installs at top-level site-packages, while
-# Cosmos imports flash_attn.flash_attn_interface. Create a small compatibility
-# package that re-exports the wheel's top-level module.
+# flash-attn: use windreamer's pre-built FA3 wheel. It installs
+# flash_attn_interface.py at top-level site-packages, while Cosmos imports
+# flash_attn.flash_attn_interface, so create a tiny compatibility package.
 RUN .venv/bin/python -m pip install --no-deps --force-reinstall \
         "https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.05.20-072445f/flash_attn_3-3.0.0%2B20260519.cu128torch280cxx11abitrue.8a8b2f-cp39-abi3-linux_x86_64.whl" && \
     .venv/bin/python - <<'EOF'
@@ -73,15 +68,14 @@ with open(os.path.join(pkg, "flash_attn_interface.py"), "w") as f:
 from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
 EOF
 
-# natten: use the pre-built wheel matching torch 2.8.0 + CUDA 12.8. Building
-# NATTEN from source is slow and brittle in Docker.
+# NATTEN has a prebuilt wheel for torch 2.8.0 + CUDA 12.8. Do not source-build
+# it inside Docker.
 RUN .venv/bin/python -m pip install --force-reinstall --no-deps \
         "natten==0.21.1+torch280cu128" \
         -f https://whl.natten.org
 
 # transformer-engine: install explicit package pieces with --no-deps so pip
-# cannot replace the already-installed torch 2.8.0+cu128 wheel. Point TE at the
-# cuDNN bundled in the PyTorch environment to avoid mixed system/venv cuDNN.
+# cannot replace torch 2.8.0+cu128.
 RUN CUDNN_PATH="$(pwd)/.venv/lib/python3.10/site-packages/nvidia/cudnn" && \
     CUDNN_HOME="${CUDNN_PATH}" \
     LD_LIBRARY_PATH="${CUDNN_PATH}/lib:${LD_LIBRARY_PATH:-}" \
@@ -98,15 +92,13 @@ import torch
 assert torch.__version__.startswith("2.8.0"), torch.__version__
 assert torch.version.cuda and torch.version.cuda.startswith("12.8"), torch.version.cuda
 assert "sm_120" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
+from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
 import natten
 assert natten.HAS_LIBNATTEN, "NATTEN was installed without libnatten CUDA kernels"
-from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
 import transformer_engine.pytorch  # noqa: F401
-from cosmos_predict2.configs.config import make_config  # noqa: F401
 from cosmos_predict2.pipelines.video2world import Video2WorldPipeline  # noqa: F401
 from cosmos_predict2.pipelines.world2action import World2ActionPipeline  # noqa: F401
 from lerobot_policy_mimic_video.grpc_policy_server import MimicVideoPolicyServer  # noqa: F401
-from lerobot_policy_mimic_video.modeling_mimic_video import MimicVideoPolicy  # noqa: F401
 EOF
 
 WORKDIR /workspace/so101-mimic-video-deploy

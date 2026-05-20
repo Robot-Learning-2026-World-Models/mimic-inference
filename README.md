@@ -12,6 +12,22 @@ Build the robot action deployment image:
 docker build -t so101-mimic-video-deploy .
 ```
 
+For RTX 5090 / CUDA 12.8 hosts, build the Blackwell image instead:
+
+```bash
+docker build -f Dockerfile.blackwell -t so101-mimic-video-deploy:blackwell .
+```
+
+The Blackwell image defaults to RTX 5090 (`sm_120`) to keep CUDA extension
+builds small. For B200/GB200-style Blackwell, override both arch args:
+
+```bash
+docker build -f Dockerfile.blackwell \
+  --build-arg CUDA_ARCH_LIST="10.0" \
+  --build-arg NVTE_CUDA_ARCHS="100" \
+  -t so101-mimic-video-deploy:blackwell .
+```
+
 Pull the dataset stats (NOT NEEDED UNLESS WE NEED TO FUCKING RECOMPUTE THE MOTHERFUCKINGS STATS):
 ```
 docker run --rm --gpus all --ipc=host --shm-size=32g \

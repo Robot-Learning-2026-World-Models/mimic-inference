@@ -51,16 +51,21 @@ RUN .venv/bin/python -m pip install torch==2.8.0 torchvision==0.23.0 \
         --force-reinstall
 
 # flash-attn: use windreamer's pre-built FA3 wheels (sm_120 included).
-# FA3's flash_attn_interface.py installs at the top of site-packages rather than
-# inside the flash_attn/ package that cosmos imports from, so we overwrite that
-# file after installing to keep 'from flash_attn.flash_attn_interface import ...' working.
+# FA3's flash_attn_interface.py installs at top-level site-packages, while
+# Cosmos imports flash_attn.flash_attn_interface. Create a small compatibility
+# package that re-exports the wheel's top-level module.
 RUN .venv/bin/python -m pip install --no-deps --force-reinstall \
         "https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.05.20-072445f/flash_attn_3-3.0.0%2B20260519.cu128torch280cxx11abitrue.8a8b2f-cp39-abi3-linux_x86_64.whl" && \
     .venv/bin/python - <<'EOF'
-import site, shutil, os
+import os
+import site
 sp = next(p for p in site.getsitepackages() if "site-packages" in p)
-shutil.copy(os.path.join(sp, "flash_attn_interface.py"),
-            os.path.join(sp, "flash_attn", "flash_attn_interface.py"))
+pkg = os.path.join(sp, "flash_attn")
+os.makedirs(pkg, exist_ok=True)
+open(os.path.join(pkg, "__init__.py"), "a").close()
+with open(os.path.join(pkg, "flash_attn_interface.py"), "w") as f:
+    f.write("from flash_attn_interface import *\n")
+from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
 EOF
 
 # natten: build locally so Docker builds without GPU access still include the
@@ -88,6 +93,7 @@ assert "sm_100" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
 assert "sm_120" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
 import natten
 assert natten.HAS_LIBNATTEN, "NATTEN was installed without libnatten CUDA kernels"
+from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
 import transformer_engine.pytorch  # noqa: F401
 EOF
 

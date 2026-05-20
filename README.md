@@ -37,11 +37,47 @@ docker run --rm --gpus all --ipc=host --shm-size=32g \
     -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
     -e MIMIC_VIDEO_HF_REPO_ID=mimicinferencegobrrrr/mimic-finetune \
     -e VIDEO_MODEL_HF_FILENAME=video_backbone/iter_000002800_fused.pt \
-    -e ACTION_MODEL_HF_FILENAME=action_decoder/iter_000002050.pt \
+    -e ACTION_MODEL_HF_FILENAME=action_decoder/iter_000001850.pt \
     -e HF_STATS_FILENAME=dataset_statistics/so101_task1_2_stats.json \
     -e HF_STATS_REPO_TYPE=model \
     so101-mimic-video-deploy \
     python scripts/prepull_mimic_video_assets.py
+```
+
+Pull tokenizer since I fucked up:
+```
+docker run --rm \
+    -v $PWD/checkpoints:/checkpoints \
+    -v $PWD/hf-cache:/root/.cache/huggingface \
+    -e HF_HOME=/root/.cache/huggingface \
+    -e HF_TOKEN=$HF_TOKEN \
+    so101-mimic-video-deploy \
+    hf download mimicinferencegobrrrr/mimic-finetune \
+      video_backbone/tokenizer/tokenizer.pth \
+      --repo-type model \
+      --local-dir /checkpoints
+```
+
+Start the server:
+```
+docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
+    -p 8080:8080 \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
+    -v $PWD/mimic-video/configs/so101:/workspace/so101-mimic-video-deploy/mimic-video/configs/so101:ro \
+    -v $PWD/checkpoints:/checkpoints \
+    -v $PWD/checkpoints/video_backbone:/workspace/so101-mimic-video-deploy/mimic-video/model/checkpoints/video_backbone:ro \
+    -v $PWD/checkpoints/text_encoder/text_encoder:/workspace/so101-mimic-video-deploy/mimic-video/model/checkpoints/text_encoder:ro \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e VIDEO_MODEL_PATH=/checkpoints/iter_000002800_fused.pt \
+    -e ACTION_MODEL_PATH=/checkpoints/iter_000001900.pt \
+    -e STATS_PATH=/checkpoints/dataset_statistics/so101_task1_2_stats.json \
+    -e MIMIC_VIDEO_TASK=task1 \
+    -e PREPULL=0 \
+    -e FPS=30 \
+    so101-mimic-video-deploy \
+    policy-server
 ```
 
 Run the LeRobot async policy server on the GPU machine:

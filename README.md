@@ -4,6 +4,11 @@ LeRobot async deployment wrapper for `mimic-video` on SO101.
 
 This repo keeps deployment separate from the training/research repo and vendors `mimic-video` as a git submodule. The submodule should track `video_finetune_improvements`.
 
+```bash
+cd ~/mimic-inference
+git submodule update --init --recursive
+```
+
 ## Container
 
 Build the robot action deployment image:

@@ -3,8 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lerobot.configs import PreTrainedConfig
-from lerobot.optim import AdamWConfig
+try:
+    from lerobot.configs import PreTrainedConfig
+except ImportError:
+    from lerobot.configs.policies import PreTrainedConfig
+
+try:
+    from lerobot.optim import AdamWConfig
+except ImportError:
+    from lerobot.optim.optimizers import AdamWConfig
 
 
 @PreTrainedConfig.register_subclass("mimic_video")

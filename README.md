@@ -12,15 +12,36 @@ Build the robot action deployment image:
 docker build -t so101-mimic-video-deploy .
 ```
 
-Pull the dataset stats:
+Pull the dataset stats (NOT NEEDED UNLESS WE NEED TO FUCKING RECOMPUTE THE MOTHERFUCKINGS STATS):
 ```
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --rm --gpus all --ipc=host --shm-size=32g \
     -v $PWD/hf-cache:/root/.cache/huggingface \
     -v $PWD/data:/workspace/so101-mimic-video-deploy/data \
     -e HF_HOME=/root/.cache/huggingface \
     so101-mimic-video-deploy \
     python scripts/prepare_so101_inference_stats.py \
       --config mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml
+```
+
+Pull weights (DO THIS IN A FUCKING REPO WITH SPACE):
+```
+docker run --rm --gpus all --ipc=host --shm-size=32g \
+    -v $PWD/scripts/prepull_mimic_video_assets.py:/workspace/so101-mimic-video-deploy/scripts/prepull_mimic_video_assets.py:ro \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video/training_config.py:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video/training_config.py:ro \
+    -v $PWD/checkpoints:/checkpoints \
+    -v $PWD/hf-cache:/root/.cache/huggingface \
+    -e HF_HOME=/root/.cache/huggingface \
+    -e HF_TOKEN=$HF_TOKEN \
+    -e HF_HUB_ETAG_TIMEOUT=60 \
+    -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e MIMIC_VIDEO_HF_REPO_ID=mimicinferencegobrrrr/mimic-finetune \
+    -e VIDEO_MODEL_HF_FILENAME=video_backbone/iter_000002800_fused.pt \
+    -e ACTION_MODEL_HF_FILENAME=action_decoder/iter_000002050.pt \
+    -e HF_STATS_FILENAME=dataset_statistics/so101_task1_2_stats.json \
+    -e HF_STATS_REPO_TYPE=model \
+    so101-mimic-video-deploy \
+    python scripts/prepull_mimic_video_assets.py
 ```
 
 Run the LeRobot async policy server on the GPU machine:

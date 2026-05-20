@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -135,7 +136,7 @@ def maybe_download_stats(*, stats_path: Path, hf_repo_id: str | None, hf_filenam
         hf_hub_download(
             repo_id=hf_repo_id,
             filename=hf_filename,
-            repo_type="dataset",
+            repo_type=os.environ.get("HF_STATS_REPO_TYPE", "dataset"),
             revision=hf_revision or "main",
         )
     )

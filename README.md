@@ -6,6 +6,11 @@ This repo keeps deployment separate from the training/research repo and vendors 
 
 ## Container
 
+```bash
+cd ~/mimic-inference
+git submodule update --init --recursive
+```
+
 Build the robot action deployment image:
 
 ```bash

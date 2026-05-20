@@ -1,7 +1,8 @@
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
-ARG CUDA_ARCH_LIST="10.0;12.0"
-ARG MAX_JOBS=16
+ARG CUDA_ARCH_LIST="12.0"
+ARG NVTE_CUDA_ARCHS="120"
+ARG MAX_JOBS=4
 
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_CACHE_DIR=/root/.cache/uv \
@@ -10,6 +11,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TOKENIZERS_PARALLELISM=false \
     CUDA_DEVICE_MAX_CONNECTIONS=1 \
     NVTE_FUSED_ATTN=0 \
+    NVTE_CUDA_ARCHS="${NVTE_CUDA_ARCHS}" \
+    NVTE_BUILD_THREADS_PER_JOB=1 \
     TORCH_CUDA_ARCH_LIST="${CUDA_ARCH_LIST}" \
     NATTEN_CUDA_ARCH="${CUDA_ARCH_LIST}" \
     NATTEN_N_WORKERS="${MAX_JOBS}" \
@@ -44,6 +47,8 @@ WORKDIR /workspace/so101-mimic-video-deploy/mimic-video/model
 # because its torch/extension wheels do not contain Blackwell kernels.
 RUN uv sync
 RUN uv pip install --python .venv/bin/python pip
+RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]"
+RUN .venv/bin/python -m pip install --no-deps pybind11==2.13.6 wheel==0.45.1
 
 # torch 2.8.0 provides CUDA 12.8 wheels with Blackwell support.
 RUN .venv/bin/python -m pip install torch==2.8.0 torchvision==0.23.0 \
@@ -74,33 +79,42 @@ RUN .venv/bin/python -m pip install --force-reinstall --no-deps \
         "natten==0.21.1+torch280cu128" \
         -f https://whl.natten.org
 
-# transformer-engine: request PyTorch bindings explicitly; the base cu126
-# package is too old for Blackwell.
-RUN .venv/bin/python -m pip install "transformer-engine[pytorch]==2.1.0" --no-build-isolation --force-reinstall
+# transformer-engine: install explicit package pieces with --no-deps so pip
+# cannot replace the already-installed torch 2.8.0+cu128 wheel. Point TE at the
+# cuDNN bundled in the PyTorch environment to avoid mixed system/venv cuDNN.
+RUN CUDNN_PATH="$(pwd)/.venv/lib/python3.10/site-packages/nvidia/cudnn" && \
+    CUDNN_HOME="${CUDNN_PATH}" \
+    LD_LIBRARY_PATH="${CUDNN_PATH}/lib:${LD_LIBRARY_PATH:-}" \
+    NVTE_FRAMEWORK=pytorch \
+    .venv/bin/python -m pip install --no-build-isolation --no-deps \
+        transformer-engine-cu12==2.1.0 \
+        transformer-engine-torch==2.1.0 \
+        transformer-engine==2.1.0
 
-# apex: not on PyPI, build from source.
-RUN .venv/bin/python -m pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
-        --config-settings "--build-option=--cpp_ext" \
-        --config-settings "--build-option=--cuda_ext" \
-        "git+https://github.com/NVIDIA/apex"
-
-RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]" && uv pip install -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
+RUN . .venv/bin/activate && uv pip install --no-deps -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
 
 RUN .venv/bin/python - <<'EOF'
 import torch
 assert torch.__version__.startswith("2.8.0"), torch.__version__
 assert torch.version.cuda and torch.version.cuda.startswith("12.8"), torch.version.cuda
-assert "sm_100" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
 assert "sm_120" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
 import natten
 assert natten.HAS_LIBNATTEN, "NATTEN was installed without libnatten CUDA kernels"
 from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
 import transformer_engine.pytorch  # noqa: F401
+from cosmos_predict2.configs.config import make_config  # noqa: F401
+from cosmos_predict2.pipelines.video2world import Video2WorldPipeline  # noqa: F401
+from cosmos_predict2.pipelines.world2action import World2ActionPipeline  # noqa: F401
+from lerobot_policy_mimic_video.grpc_policy_server import MimicVideoPolicyServer  # noqa: F401
+from lerobot_policy_mimic_video.modeling_mimic_video import MimicVideoPolicy  # noqa: F401
 EOF
 
 WORKDIR /workspace/so101-mimic-video-deploy
 ENV PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/bin:${PATH}" \
-    PYTHONPATH="/workspace/so101-mimic-video-deploy/mimic-video/model"
+    PYTHONPATH="/workspace/so101-mimic-video-deploy/mimic-video/model" \
+    CUDNN_PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/lib/python3.10/site-packages/nvidia/cudnn" \
+    CUDNN_HOME="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/lib/python3.10/site-packages/nvidia/cudnn" \
+    LD_LIBRARY_PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}"
 
 EXPOSE 8000 8080
 

@@ -78,6 +78,8 @@ CHECKPOINT_CACHE_DIR=/checkpoints
 
 Prompt selection is server-side. Set `MIMIC_VIDEO_TASK=task1` or `MIMIC_VIDEO_TASK=task2`, or provide `MIMIC_VIDEO_PROMPT="..."`. The selected prompt is embedded once during startup; runtime robot observations do not re-run T5.
 
+For world-model debugging, set `DENOISED_VIDEO_SAVE_DIR=/path/to/videos` on the policy server. Saved files are named with observation and prediction indices, and `DENOISED_VIDEO_SAVE_EVERY_N`, `DENOISED_VIDEO_SAVE_FPS`, and `DENOISED_VIDEO_SAVE_PREFIX` can tune frequency, playback fps, and filename prefix. This runs the video denoising loop to completion for saved observations, so enable it sparingly during real-time robot runs. To exercise this path without an arm or input video, run `TRAINING_CONFIG=/path/to/config.yaml commands/smoke_denoised_video_debug.sh`.
+
 ## Training YAML Contract
 
 `TRAINING_CONFIG` is the source of truth for deployment preprocessing. The plugin reads:

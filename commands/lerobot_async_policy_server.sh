@@ -64,6 +64,18 @@ fi
 if [[ -n "${MIMIC_VIDEO_TASK:-}" ]]; then
   EXTRA_SERVER_ARGS+=(--task="${MIMIC_VIDEO_TASK}")
 fi
+if [[ -n "${DENOISED_VIDEO_SAVE_DIR:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--denoised_video_save_dir="${DENOISED_VIDEO_SAVE_DIR}")
+fi
+if [[ -n "${DENOISED_VIDEO_SAVE_EVERY_N:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--denoised_video_save_every_n="${DENOISED_VIDEO_SAVE_EVERY_N}")
+fi
+if [[ -n "${DENOISED_VIDEO_SAVE_FPS:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--denoised_video_save_fps="${DENOISED_VIDEO_SAVE_FPS}")
+fi
+if [[ -n "${DENOISED_VIDEO_SAVE_PREFIX:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--denoised_video_save_prefix="${DENOISED_VIDEO_SAVE_PREFIX}")
+fi
 
 if [[ "${PREPULL}" != "0" ]]; then
   PREPULL_ENV_FILE="${PREPULL_ENV_FILE:-/tmp/mimic_video_assets.env}"

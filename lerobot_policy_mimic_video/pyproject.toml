@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "LeRobot policy plugin that runs mimic-video directly inside LeRobot async PolicyServer."
 requires-python = ">=3.10"
 dependencies = [
+  "imageio",
+  "imageio-ffmpeg",
   "numpy",
   "pillow",
   "torch",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -16,11 +17,15 @@ from cosmos_predict2.data.action.types import NormalizationType
 from cosmos_predict2.pipelines.video2world import Video2WorldPipeline
 from cosmos_predict2.pipelines.video2world2action import Video2World2ActionPipeline
 from cosmos_predict2.pipelines.world2action import World2ActionPipeline
+from cosmos_predict2.utils.context_parallel import cat_outputs_cp, split_inputs_cp
+from imaginaire.utils import misc
 from imaginaire.utils.config_helper import override
 
 from .configuration_mimic_video import MimicVideoPolicyConfig
 from .training_config import build_deployment_config, load_stats
 
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MimicVideoPolicy(PreTrainedPolicy):
@@ -44,6 +49,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
         self.config = config
         self.pipeline = self._load_pipeline(config)
         self.prompt_embedding = self._load_prompt_embedding(config)
+        self._prediction_index = 0
 
     def _apply_deployment_config(self, config: MimicVideoPolicyConfig) -> None:
         dc = self.deployment_config
@@ -80,23 +86,232 @@ class MimicVideoPolicy(PreTrainedPolicy):
 
         input_vid = torch.from_numpy(images[None]).cuda().to(dtype=torch.bfloat16)
         state_tensor = torch.from_numpy(lowdims[None]).cuda().to(dtype=torch.bfloat16)
+        prompt_embedding = self.prompt_embedding if prompt == self.config.prompt else None
+        observation_timestep = kwargs.get("observation_timestep")
+        prediction_index = self._prediction_index
+        self._prediction_index += 1
+        save_index = int(observation_timestep) if observation_timestep is not None else prediction_index
 
         with torch.no_grad():
-            actions = self.pipeline(
-                input_vid=input_vid,
-                state_B_HO_O=state_tensor,
-                prompt=prompt,
-                prompt_embedding=self.prompt_embedding if prompt == self.config.prompt else None,
-                num_sampling_step=self.config.num_sampling_steps,
-                stop_after_step=self.config.stop_video_denoising_step,
-                seed=self.config.seed,
-                use_cuda_graphs=self.config.use_cuda_graphs,
-            )[0].float()
+            if self._should_save_denoised_video(prediction_index):
+                actions = self._predict_actions_and_save_denoised_video(
+                    input_vid=input_vid,
+                    state_tensor=state_tensor,
+                    prompt=prompt,
+                    prompt_embedding=prompt_embedding,
+                    save_index=save_index,
+                    prediction_index=prediction_index,
+                )[0].float()
+            else:
+                actions = self.pipeline(
+                    input_vid=input_vid,
+                    state_B_HO_O=state_tensor,
+                    prompt=prompt,
+                    prompt_embedding=prompt_embedding,
+                    num_sampling_step=self.config.num_sampling_steps,
+                    stop_after_step=self.config.stop_video_denoising_step,
+                    seed=self.config.seed,
+                    use_cuda_graphs=self.config.use_cuda_graphs,
+                )[0].float()
 
         actions = actions[: self.config.horizon].cpu()
         if actions.ndim != 2 or actions.shape[1] != self.config.action_dim:
-            raise RuntimeError(f"Expected action chunk shape (H, {self.config.action_dim}), got {tuple(actions.shape)}.")
+            raise RuntimeError(
+                f"Expected action chunk shape (H, {self.config.action_dim}), got {tuple(actions.shape)}."
+            )
         return actions.unsqueeze(0)
+
+    def _should_save_denoised_video(self, prediction_index: int) -> bool:
+        return (
+            self.config.denoised_video_save_dir is not None
+            and prediction_index % self.config.denoised_video_save_every_n == 0
+        )
+
+    def _predict_actions_and_save_denoised_video(
+        self,
+        *,
+        input_vid: torch.Tensor,
+        state_tensor: torch.Tensor,
+        prompt: str,
+        prompt_embedding: torch.Tensor | None,
+        save_index: int,
+        prediction_index: int,
+    ) -> torch.Tensor:
+        crossattn_emb, video_sigma, video = self._generate_denoised_video_and_context(
+            input_vid=input_vid,
+            prompt=prompt,
+            prompt_embedding=prompt_embedding,
+        )
+        hidden_state_shape = crossattn_emb.shape
+        crossattn_emb = crossattn_emb.reshape(hidden_state_shape[0], -1, hidden_state_shape[-1])
+        actions = self.pipeline.world2action_pipeline(
+            state_B_HO_O=state_tensor,
+            crossattn_emb=crossattn_emb,
+            context_timesteps_B_1=video_sigma.unsqueeze(1),
+            seed=self.config.seed,
+            use_cuda_graphs=self.config.use_cuda_graphs,
+        )
+        self._save_denoised_video(video, save_index=save_index, prediction_index=prediction_index)
+        return actions
+
+    def _generate_denoised_video_and_context(
+        self,
+        *,
+        input_vid: torch.Tensor,
+        prompt: str,
+        prompt_embedding: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        video_pipe = self.pipeline.video2world_pipeline
+        hidden_state_layer_idx = self.pipeline.world2action_pipeline.config.xattn_layer_idx
+        if video_pipe.text_guardrail_runner is not None:
+            from cosmos_predict2.auxiliary.guardrail.common import presets as guardrail_presets
+
+            if not guardrail_presets.run_text_guardrail(prompt, video_pipe.text_guardrail_runner):
+                raise RuntimeError("Text guardrail error on prompt.")
+
+        image_context_frames = input_vid.shape[2]
+        if image_context_frames not in {1, 5}:
+            raise ValueError(
+                f"mimic-video expects 1 or 5 image context frames, got {image_context_frames}."
+            )
+        num_latent_conditional_frames = 1 if image_context_frames == 1 else 2
+
+        data_batch = video_pipe._get_data_batch_input(
+            input_vid,
+            prompt,
+            prompt_embedding,
+            "",
+            num_latent_conditional_frames=num_latent_conditional_frames,
+        )
+        video_pipe._normalize_video_databatch_inplace(data_batch)
+        video_pipe._augment_image_dim_inplace(data_batch)
+        is_image_batch = video_pipe.is_image_batch(data_batch)
+        input_key = video_pipe.input_image_key if is_image_batch else video_pipe.input_video_key
+        n_sample = data_batch[input_key].shape[0]
+        _t, height, width = data_batch[input_key].shape[-3:]
+        state_shape = [
+            video_pipe.config.state_ch,
+            video_pipe.config.state_t,
+            height // video_pipe.tokenizer.spatial_compression_factor,
+            width // video_pipe.tokenizer.spatial_compression_factor,
+        ]
+        x0_fn = video_pipe.get_x0_fn_from_batch(
+            data_batch,
+            guidance=0.0,
+            is_negative_prompt=True,
+            use_cuda_graphs=self.config.use_cuda_graphs,
+        )
+        x_sigma_max = (
+            misc.arch_invariant_rand(
+                (n_sample, *tuple(state_shape)),
+                torch.float32,
+                video_pipe.tensor_kwargs["device"],
+                self.config.seed,
+            )
+            * video_pipe.scheduler.config.sigma_max
+        )
+        if video_pipe.dit.is_context_parallel_enabled:
+            x_sigma_max = split_inputs_cp(
+                x=x_sigma_max,
+                seq_dim=2,
+                cp_group=video_pipe.get_context_parallel_group(),
+            )
+
+        scheduler = video_pipe.scheduler
+        scheduler.set_timesteps(self.config.num_sampling_steps, device=x_sigma_max.device)
+        sample = x_sigma_max.to(dtype=torch.float32)
+        x0_prev: torch.Tensor | None = None
+        context_step = self.config.stop_video_denoising_step
+        crossattn_emb = None
+        video_sigma = None
+
+        for i, _ in enumerate(scheduler.timesteps):
+            sigma_t = scheduler.sigmas[i].to(sample.device, dtype=torch.float32)
+            sigma_in = sigma_t.repeat(sample.shape[0])
+            return_hidden_states = i == context_step
+            x0_pred = x0_fn(
+                sample,
+                sigma_in,
+                return_only_hidden_states_up_to=hidden_state_layer_idx if return_hidden_states else None,
+            )
+            if return_hidden_states:
+                x0_pred, hidden_states = x0_pred
+                crossattn_emb = hidden_states[hidden_state_layer_idx]
+                video_sigma = sigma_in
+            sample, x0_prev = scheduler.step(
+                x0_pred=x0_pred,
+                i=i,
+                sample=sample,
+                x0_prev=x0_prev,
+            )
+
+        sigma_min = scheduler.sigmas[-1].to(sample.device, dtype=torch.float32)
+        sigma_in = sigma_min.repeat(sample.shape[0])
+        return_final_hidden_states = context_step == len(scheduler.timesteps)
+        samples = x0_fn(
+            sample,
+            sigma_in,
+            return_only_hidden_states_up_to=float("inf") if return_final_hidden_states else None,
+        )
+        if return_final_hidden_states:
+            samples, hidden_states = samples
+            crossattn_emb = hidden_states[hidden_state_layer_idx]
+            video_sigma = sigma_in
+
+        if video_pipe.dit.is_context_parallel_enabled:
+            samples = cat_outputs_cp(samples, seq_dim=2, cp_group=video_pipe.get_context_parallel_group())
+        if crossattn_emb is None or video_sigma is None:
+            raise RuntimeError(
+                "Failed to capture video context for action decoding at "
+                f"denoising step {self.config.stop_video_denoising_step}."
+            )
+        return crossattn_emb, video_sigma, video_pipe.decode(samples)
+
+    def _save_denoised_video(
+        self,
+        video: torch.Tensor,
+        *,
+        save_index: int,
+        prediction_index: int,
+    ) -> None:
+        save_dir = self.config.denoised_video_save_dir
+        if save_dir is None:
+            return
+        try:
+            import imageio.v2 as imageio
+
+            save_dir = save_dir.expanduser()
+            save_dir.mkdir(parents=True, exist_ok=True)
+            filename = (
+                f"{self.config.denoised_video_save_prefix}_obs{save_index:06d}"
+                f"_pred{prediction_index:06d}.mp4"
+            )
+            path = save_dir / filename
+            frames = self._video_tensor_to_uint8_frames(video)
+            imageio.mimsave(path, frames, fps=self.config.denoised_video_save_fps)
+            LOGGER.info("Saved denoised mimic-video rollout to %s", path)
+        except Exception:
+            LOGGER.exception(
+                "Failed to save denoised mimic-video rollout; continuing with action inference."
+            )
+
+    @staticmethod
+    def _video_tensor_to_uint8_frames(video: torch.Tensor) -> np.ndarray:
+        if video.ndim == 5:
+            video = video[0]
+        if video.ndim != 4:
+            raise ValueError(
+                "Expected denoised video with shape (B, C, T, H, W) or (C, T, H, W), "
+                f"got {tuple(video.shape)}."
+            )
+        if video.shape[0] not in {1, 3}:
+            raise ValueError(f"Expected denoised video channels-first shape, got {tuple(video.shape)}.")
+        video = video.detach().float().cpu().clamp(-1.0, 1.0)
+        video = ((video + 1.0) * 127.5).round().clamp(0, 255).to(torch.uint8)
+        frames = video.permute(1, 2, 3, 0).numpy()
+        if frames.shape[-1] == 1:
+            frames = np.repeat(frames, 3, axis=-1)
+        return frames
 
     def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return self.predict_action_chunk(batch, **kwargs)[0, 0]

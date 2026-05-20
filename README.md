@@ -97,6 +97,21 @@ MIMIC_VIDEO_TASK=task1   # or task2
 MIMIC_VIDEO_PROMPT="custom prompt text"
 ```
 
+To debug the world model, optionally save the fully denoised video from the same video denoising trajectory used to produce the action-decoder context:
+
+```bash
+DENOISED_VIDEO_SAVE_DIR=/tmp/mimic-denoised-videos \
+DENOISED_VIDEO_SAVE_EVERY_N=10 \
+commands/lerobot_async_policy_server.sh
+```
+
+Without an arm or input video, run the synthetic no-robot debug smoke test:
+
+```bash
+TRAINING_CONFIG=/path/to/mimic-video/config.yaml \
+commands/smoke_denoised_video_debug.sh
+```
+
 See [docs/LEROBOT_ASYNC.md](docs/LEROBOT_ASYNC.md) for the full bring-up checklist.
 
 ## Network

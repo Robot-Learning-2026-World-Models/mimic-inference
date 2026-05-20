@@ -57,6 +57,10 @@ class MimicVideoPolicyServerConfig(PolicyServerConfig):
     task: str | None = None
     num_sampling_steps: int = 35
     stop_video_denoising_step: int = 0
+    denoised_video_save_dir: Path | None = None
+    denoised_video_save_every_n: int = 1
+    denoised_video_save_fps: int = 10
+    denoised_video_save_prefix: str = "denoised"
     use_cuda_graphs: bool = True
     seed: int = 0
 
@@ -177,6 +181,10 @@ class MimicVideoPolicyServer(PolicyServer):
             input_frequency=self.config.fps,
             num_sampling_steps=self.config.num_sampling_steps,
             stop_video_denoising_step=self.config.stop_video_denoising_step,
+            denoised_video_save_dir=self.config.denoised_video_save_dir,
+            denoised_video_save_every_n=self.config.denoised_video_save_every_n,
+            denoised_video_save_fps=self.config.denoised_video_save_fps,
+            denoised_video_save_prefix=self.config.denoised_video_save_prefix,
             use_cuda_graphs=self.config.use_cuda_graphs,
             seed=self.config.seed,
         )
@@ -195,8 +203,13 @@ class MimicVideoPolicyServer(PolicyServer):
         )
         return services_pb2.Empty()
 
-    def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        chunk = self.policy.predict_action_chunk(observation)
+    def _get_action_chunk(
+        self,
+        observation: dict[str, torch.Tensor],
+        *,
+        observation_timestep: int | None = None,
+    ) -> torch.Tensor:
+        chunk = self.policy.predict_action_chunk(observation, observation_timestep=observation_timestep)
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)
         return chunk[:, : self.actions_per_chunk, :]
@@ -227,7 +240,7 @@ class MimicVideoPolicyServer(PolicyServer):
         prepare_time = time.perf_counter() - start_prepare
 
         start_inference = time.perf_counter()
-        action_tensor = self._get_action_chunk(observation)
+        action_tensor = self._get_action_chunk(observation, observation_timestep=observation_t.get_timestep())
         inference_time = time.perf_counter() - start_inference
         if action_tensor.ndim != 3:
             raise RuntimeError(f"Expected action chunk shape (B, H, D), got {tuple(action_tensor.shape)}")

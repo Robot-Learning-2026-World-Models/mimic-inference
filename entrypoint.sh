@@ -14,6 +14,9 @@ case "${mode}" in
   policy-server)
     exec commands/lerobot_async_policy_server.sh "$@"
     ;;
+  debug-smoke|smoke-debug)
+    exec commands/smoke_denoised_video_debug.sh "$@"
+    ;;
   shell)
     exec bash "$@"
     ;;

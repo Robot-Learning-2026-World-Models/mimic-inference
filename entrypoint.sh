@@ -11,9 +11,6 @@ case "${mode}" in
   policy-server)
     exec commands/lerobot_async_policy_server.sh "$@"
     ;;
-  video-server)
-    exec python scripts/so101_inference_server.py "$@"
-    ;;
   shell)
     exec bash "$@"
     ;;

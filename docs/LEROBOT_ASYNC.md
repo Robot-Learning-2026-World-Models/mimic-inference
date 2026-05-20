@@ -1,22 +1,21 @@
 # LeRobot Async Deployment
 
-This is the robot deployment path. It is gRPC end-to-end between LeRobot's `RobotClient` and `PolicyServer`; the mimic-video policy is loaded directly inside the LeRobot `PolicyServer`.
-
-The standalone HTTP server is only for video debugging with `/generate_video`; it is stateless and each request carries explicit real image/state context.
+This is the robot deployment path. It is gRPC end-to-end between the custom mimic-video LeRobot-compatible `RobotClient` and `PolicyServer`; the mimic-video policy is loaded directly inside the policy server.
 
 ## Topology
 
 ```text
 GPU machine
-  lerobot.async_inference.policy_server  (gRPC server)
+  lerobot_policy_mimic_video.grpc_policy_server  (gRPC server)
     loads policy_type=mimic_video
     loads Cosmos video backbone + SO101 action decoder + stats
     returns action chunks
 
 Robot machine
-  lerobot.async_inference.robot_client  (gRPC client)
+  lerobot_policy_mimic_video.grpc_robot_client  (gRPC client)
     reads SO101 camera/state
-    executes returned action chunks at 10 Hz
+    sends a raw camera frame window with every observation
+    executes returned action chunks one action per control tick at 30 Hz
 ```
 
 ## 1. Install The LeRobot Policy Plugin
@@ -62,8 +61,6 @@ commands/lerobot_async_so101_client.sh
 
 Use `STATS_PATH` instead of `ACTION_DATA_DIR` when you have a specific statistics JSON. To download stats from Hugging Face at startup, set `STATS_PATH` to the desired local path and provide `HF_STATS_REPO_ID`, `HF_STATS_FILENAME`, and optionally `HF_STATS_REVISION`.
 
-If your LeRobot CLI version does not accept `--policy.*` overrides from `robot_client`, create a local policy config/checkpoint directory for `mimic_video` with these fields and pass that as `--pretrained_name_or_path`.
-
 ## Training YAML Contract
 
 `TRAINING_CONFIG` is the source of truth for deployment preprocessing. The plugin reads:
@@ -85,15 +82,16 @@ That YAML currently has `training.action_decoder.enabled: false`, so the action 
 
 ## Bring-Up Order
 
-1. Use the standalone HTTP server only for video debugging with `scripts/video_debug_client.py`.
-2. Start LeRobot `policy_server` on the GPU machine and confirm the robot client can connect.
-3. Start with the robot disabled or lifted; log returned action chunks.
-4. Enable the robot and execute one short chunk.
-5. Increase to continuous async only after action sign, scale, and joint order look correct.
+1. Prepare action statistics with `scripts/prepare_so101_inference_stats.py`.
+2. Start `commands/lerobot_async_policy_server.sh` on the GPU machine.
+3. Run `scripts/smoke_mimic_video_grpc_client.py` and confirm it receives action chunks without the robot.
+4. Start with the robot disabled or lifted; log returned action chunks.
+5. Enable the robot and execute one short chunk.
+6. Increase to continuous async only after action sign, scale, and joint order look correct.
 
 ## Contract
 
 - Image stream must match training camera/crop/resize.
 - State must be the same 6D `observation.state` order used in training.
 - Actions returned by mimic-video are 6D SO101 action vectors. Confirm whether your LeRobot SO101 action path expects absolute joint targets, deltas, or another representation before motor execution.
-- Use LeRobot async for robot action deployment. Keep the standalone HTTP server for video debug only.
+- Use the custom gRPC client/server in this repo for robot action deployment.

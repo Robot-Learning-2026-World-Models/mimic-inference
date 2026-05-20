@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import Any
 
 import numpy as np
@@ -41,9 +40,6 @@ class MimicVideoPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
         self.pipeline = self._load_pipeline(config)
-        self.image_history: deque[np.ndarray] = deque(maxlen=config.image_horizon)
-        self.lowdim_history: deque[np.ndarray] = deque(maxlen=config.lowdim_horizon)
-        self._action_queue: list[torch.Tensor] = []
 
     def _apply_deployment_config(self, config: MimicVideoPolicyConfig) -> None:
         dc = self.deployment_config
@@ -58,26 +54,26 @@ class MimicVideoPolicy(PreTrainedPolicy):
         config.horizon = dc.action_horizon
         config.image_horizon = dc.image_horizon
         config.lowdim_horizon = dc.lowdim_horizon
+        config.image_frequency = dc.image_frequency
+        config.lowdim_frequency = dc.lowdim_frequency
+        config.action_frequency = dc.action_frequency
         config.max_horizon = dc.max_horizon
+        config.video_pipe_state_t = dc.video_pipe_state_t
         config.action_denoising_steps = dc.action_denoising_steps
         config.stats_path = dc.stats_path
+        config._mimic_video_network_config = dc.network_config
 
     def reset(self) -> None:
-        self.image_history.clear()
-        self.lowdim_history.clear()
-        self._action_queue.clear()
+        return None
 
     def get_optim_params(self) -> dict:
         return {"params": []}
 
     def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         prompt = str(kwargs.get("task", None) or kwargs.get("prompt", None) or self.config.prompt)
-        image = self._image_from_batch(batch)
-        state = self._state_from_batch(batch)
-        self._append_history(image, state)
+        images = self._image_context_from_batch(batch)
+        lowdims = self._state_context_from_batch(batch)
 
-        images = np.concatenate(list(self.image_history), axis=1)
-        lowdims = np.stack(list(self.lowdim_history), axis=0)
         input_vid = torch.from_numpy(images[None]).cuda().to(dtype=torch.bfloat16)
         state_tensor = torch.from_numpy(lowdims[None]).cuda().to(dtype=torch.bfloat16)
 
@@ -98,22 +94,10 @@ class MimicVideoPolicy(PreTrainedPolicy):
         return actions.unsqueeze(0)
 
     def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        if not self._action_queue:
-            chunk = self.predict_action_chunk(batch, **kwargs)[0]
-            self._action_queue = [action for action in chunk[: self.config.n_action_steps]]
-        return self._action_queue.pop(0)
+        return self.predict_action_chunk(batch, **kwargs)[0, 0]
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         raise NotImplementedError("mimic_video is an inference-only policy.")
-
-    def _append_history(self, image: np.ndarray, state: np.ndarray) -> None:
-        self.image_history.append(self._process_image(image))
-        while len(self.image_history) < self.config.image_horizon:
-            self.image_history.append(self.image_history[-1].copy())
-
-        self.lowdim_history.append(state.astype(np.float32))
-        while len(self.lowdim_history) < self.config.lowdim_horizon:
-            self.lowdim_history.append(self.lowdim_history[-1].copy())
 
     def _process_image(self, image: np.ndarray) -> np.ndarray:
         pil_image = Image.fromarray(image.astype(np.uint8), "RGB")
@@ -125,22 +109,56 @@ class MimicVideoPolicy(PreTrainedPolicy):
         tensor = rearrange(image, "h w c -> c h w")[:, None, :, :]
         return 2.0 * (tensor.astype(np.float32) / 255.0 - 0.5)
 
-    def _image_from_batch(self, batch: dict[str, torch.Tensor]) -> np.ndarray:
+    def _image_context_from_batch(self, batch: dict[str, torch.Tensor]) -> np.ndarray:
+        images = self._images_from_batch(batch)
+        step = self.config.input_frequency // self.config.image_frequency
+        raw_horizon = 1 + (self.config.image_horizon - 1) * step
+        if len(images) < raw_horizon:
+            images = [images[0].copy() for _ in range(raw_horizon - len(images))] + images
+        selected = images[-raw_horizon::step]
+        if len(selected) != self.config.image_horizon:
+            raise RuntimeError(
+                f"Expected {self.config.image_horizon} selected image frames, got {len(selected)} "
+                f"from raw_horizon={raw_horizon}, step={step}."
+            )
+        return np.concatenate([self._process_image(image) for image in selected], axis=1)
+
+    def _images_from_batch(self, batch: dict[str, torch.Tensor]) -> list[np.ndarray]:
         if self.config.camera_key not in batch:
             raise KeyError(f"Missing camera key {self.config.camera_key}; available keys: {sorted(batch)}")
         image = batch[self.config.camera_key]
         if isinstance(image, torch.Tensor):
             image = image.detach().cpu()
-            while image.ndim > 3:
-                image = image[0]
             arr = image.numpy()
         else:
             arr = np.asarray(image)
 
+        frames = self._split_image_frames(arr)
+        return [self._normalize_image_array(frame) for frame in frames]
+
+    @staticmethod
+    def _split_image_frames(arr: np.ndarray) -> list[np.ndarray]:
+        arr = np.asarray(arr)
+        if arr.ndim == 5:
+            arr = arr[0]
+        if arr.ndim == 4:
+            if arr.shape[0] == 1 and arr.shape[1] in {1, 3}:
+                return [arr[0]]
+            return [arr[i] for i in range(arr.shape[0])]
+        if arr.ndim == 3:
+            return [arr]
+        raise ValueError(f"Expected image tensor with 3, 4, or 5 dims, got {arr.shape}.")
+
+    @staticmethod
+    def _normalize_image_array(arr: np.ndarray) -> np.ndarray:
         if arr.ndim != 3:
-            raise ValueError(f"Expected image tensor with 3 dims after batch squeeze, got {arr.shape}.")
+            raise ValueError(f"Expected one image frame with 3 dims, got {arr.shape}.")
         if arr.shape[0] in {1, 3}:
             arr = np.moveaxis(arr, 0, -1)
+        if arr.shape[-1] == 1:
+            arr = np.repeat(arr, 3, axis=-1)
+        if arr.shape[-1] != 3:
+            raise ValueError(f"Expected RGB image frame, got shape {arr.shape}.")
         if arr.dtype != np.uint8:
             max_value = float(np.nanmax(arr)) if arr.size else 1.0
             if max_value <= 1.5:
@@ -148,29 +166,38 @@ class MimicVideoPolicy(PreTrainedPolicy):
             arr = np.clip(arr, 0, 255).astype(np.uint8)
         return arr
 
-    def _state_from_batch(self, batch: dict[str, torch.Tensor]) -> np.ndarray:
+    def _state_context_from_batch(self, batch: dict[str, torch.Tensor]) -> np.ndarray:
         if self.config.state_key not in batch:
             raise KeyError(f"Missing state key {self.config.state_key}; available keys: {sorted(batch)}")
         state = batch[self.config.state_key]
         if isinstance(state, torch.Tensor):
             state = state.detach().cpu()
-            while state.ndim > 1:
-                state = state[0]
             arr = state.numpy()
         else:
             arr = np.asarray(state)
-        arr = np.asarray(arr, dtype=np.float32).reshape(-1)
-        if arr.shape != (self.config.action_dim,):
-            raise ValueError(f"Expected {self.config.action_dim}D state, got shape {arr.shape}.")
-        return arr
+        arr = np.asarray(arr, dtype=np.float32)
+        while arr.ndim > 2:
+            arr = arr[0]
+        if arr.ndim == 1:
+            arr = arr[None]
+        if arr.ndim != 2 or arr.shape[1] != self.config.action_dim:
+            raise ValueError(f"Expected states with shape (T, {self.config.action_dim}), got {arr.shape}.")
+        if len(arr) < self.config.lowdim_horizon:
+            arr = np.concatenate([np.repeat(arr[:1], self.config.lowdim_horizon - len(arr), axis=0), arr], axis=0)
+        return arr[-self.config.lowdim_horizon :]
 
     @staticmethod
     def _load_pipeline(config: MimicVideoPolicyConfig) -> Video2World2ActionPipeline:
         cfg = make_config()
         cfg = override(cfg, ["--", f"experiment={config.experiment_name}"])
         cfg.model.config.video_pipe_config.guardrail_config.enabled = False
+        cfg.model.config.video_pipe_config.state_t = config.video_pipe_state_t
         cfg.model.config.pipe_config.xattn_layer_idx = config.xattn_layer_idx
         cfg.model.config.pipe_config.scheduler.num_denoising_steps = config.action_denoising_steps
+        network_config = getattr(config, "_mimic_video_network_config", {})
+        for key, value in network_config.items():
+            if hasattr(cfg.model.config.pipe_config.net, key):
+                setattr(cfg.model.config.pipe_config.net, key, value)
         cfg.model.config.pipe_config.net.max_horizon = config.max_horizon
         cfg.model.config.pipe_config.net.in_channels = config.action_dim
         cfg.model.config.pipe_config.net.out_channels = config.action_dim

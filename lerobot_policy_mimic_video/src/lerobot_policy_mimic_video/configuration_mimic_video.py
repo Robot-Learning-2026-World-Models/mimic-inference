@@ -35,9 +35,14 @@ class MimicVideoPolicyConfig(PreTrainedConfig):
     crop_height: int = 480
     image_horizon: int = 5
     lowdim_horizon: int = 1
+    image_frequency: int = 10
+    lowdim_frequency: int = 30
+    action_frequency: int = 30
+    input_frequency: int = 30
     num_sampling_steps: int = 35
     stop_video_denoising_step: int = 0
     max_horizon: int = 61
+    video_pipe_state_t: int = 11
     xattn_layer_idx: int = 20
     action_denoising_steps: int = 10
     use_cuda_graphs: bool = True
@@ -55,6 +60,22 @@ class MimicVideoPolicyConfig(PreTrainedConfig):
             raise ValueError("training_config is required; pass the SO101 YAML used for training.")
         if self.stats_path is None and self.action_data_dir is None:
             raise ValueError("Either stats_path or action_data_dir is required.")
+        if self.input_frequency <= 0:
+            raise ValueError("input_frequency must be positive.")
+        if self.image_frequency <= 0:
+            raise ValueError("image_frequency must be positive.")
+        if self.action_frequency <= 0:
+            raise ValueError("action_frequency must be positive.")
+        if self.input_frequency % self.image_frequency != 0:
+            raise ValueError(
+                "input_frequency must be an integer multiple of image_frequency "
+                f"for stateless visual downsampling, got {self.input_frequency} and {self.image_frequency}."
+            )
+        if self.action_frequency % self.input_frequency != 0:
+            raise ValueError(
+                "action_frequency must be an integer multiple of input_frequency "
+                f"for action chunk execution, got {self.action_frequency} and {self.input_frequency}."
+            )
 
     def validate_features(self) -> None:
         if self.action_feature is not None and self.action_feature.shape[0] != self.action_dim:

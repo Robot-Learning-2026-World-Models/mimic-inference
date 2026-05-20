@@ -7,10 +7,8 @@ except ImportError as exc:
 
 from .configuration_mimic_video import MimicVideoPolicyConfig
 from .modeling_mimic_video import MimicVideoPolicy
-from .processor_mimic_video import make_mimic_video_pre_post_processors
 
 __all__ = [
     "MimicVideoPolicy",
     "MimicVideoPolicyConfig",
-    "make_mimic_video_pre_post_processors",
 ]

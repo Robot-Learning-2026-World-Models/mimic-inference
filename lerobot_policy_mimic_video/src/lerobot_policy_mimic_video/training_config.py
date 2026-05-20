@@ -29,9 +29,11 @@ def resolve_action_experiment(name: str) -> str:
 @dataclass(frozen=True)
 class PolicyIOConfig:
     image_horizon: int
+    image_action_horizon: int
     lowdim_horizon: int
     action_horizon: int
     image_frequency: int | None
+    image_action_frequency: int | None
     lowdim_frequency: int | None
     action_frequency: int | None
 
@@ -51,6 +53,11 @@ class MimicVideoDeploymentConfig:
     image_horizon: int
     lowdim_horizon: int
     action_horizon: int
+    image_frequency: int
+    lowdim_frequency: int
+    action_frequency: int
+    video_pipe_state_t: int
+    network_config: dict[str, Any]
     stats_path: Path
 
 
@@ -84,14 +91,17 @@ def load_policy_io(training_config: Path, dataset_name: str) -> PolicyIOConfig:
     action = _require_mapping(policy_io.get("action"), f"{policy_io_path}: policy_io.action")
     image_obs = _require_mapping(obs.get("workspace_rgb"), f"{policy_io_path}: policy_io.obs.workspace_rgb")
     state_obs = _require_mapping(obs.get("joint_state_lowdim"), f"{policy_io_path}: policy_io.obs.joint_state_lowdim")
+    image_action = _require_mapping(action.get("workspace_rgb"), f"{policy_io_path}: policy_io.action.workspace_rgb")
     joint_action = _require_mapping(action.get("joint_action_lowdim"), f"{policy_io_path}: policy_io.action.joint_action_lowdim")
     return PolicyIOConfig(
         image_horizon=_require_int(image_obs.get("horizon"), "policy_io.obs.workspace_rgb.horizon"),
+        image_action_horizon=_require_int(image_action.get("horizon"), "policy_io.action.workspace_rgb.horizon"),
         lowdim_horizon=_require_int(state_obs.get("horizon"), "policy_io.obs.joint_state_lowdim.horizon"),
         action_horizon=_require_int(joint_action.get("horizon"), "policy_io.action.joint_action_lowdim.horizon"),
-        image_frequency=image_obs.get("target_frequency"),
-        lowdim_frequency=state_obs.get("target_frequency"),
-        action_frequency=joint_action.get("target_frequency"),
+        image_frequency=None if image_obs.get("target_frequency") is None else int(image_obs.get("target_frequency")),
+        image_action_frequency=None if image_action.get("target_frequency") is None else int(image_action.get("target_frequency")),
+        lowdim_frequency=None if state_obs.get("target_frequency") is None else int(state_obs.get("target_frequency")),
+        action_frequency=None if joint_action.get("target_frequency") is None else int(joint_action.get("target_frequency")),
     )
 
 
@@ -132,6 +142,24 @@ def maybe_download_stats(*, stats_path: Path, hf_repo_id: str | None, hf_filenam
     return stats_path
 
 
+def _derive_video_pipe_state_t(policy_io: PolicyIOConfig) -> int:
+    video_pixel_horizon = policy_io.image_horizon + policy_io.image_action_horizon
+    if (video_pixel_horizon - 1) % 4 != 0:
+        raise ValueError(
+            "policy_io workspace_rgb obs/action horizons must form a Cosmos pixel horizon "
+            f"of 4n+1 frames, got {video_pixel_horizon}."
+        )
+    return 1 + (video_pixel_horizon - 1) // 4
+
+
+def _require_frequency(value: int | None, name: str) -> int:
+    if value is None:
+        raise ValueError(f"{name} must be set for SO101 deployment.")
+    if int(value) <= 0:
+        raise ValueError(f"{name} must be positive, got {value}.")
+    return int(value)
+
+
 def build_deployment_config(
     *,
     training_config: Path | None,
@@ -164,6 +192,30 @@ def build_deployment_config(
 
     dataset_name = str(action_cfg.get("experiment") or "so101")
     policy_io = load_policy_io(training_config, dataset_name)
+    image_frequency = _require_frequency(policy_io.image_frequency, "policy_io.obs.workspace_rgb.target_frequency")
+    image_action_frequency = _require_frequency(
+        policy_io.image_action_frequency,
+        "policy_io.action.workspace_rgb.target_frequency",
+    )
+    if image_action_frequency != image_frequency:
+        raise ValueError(
+            "SO101 deployment expects obs/action video target frequencies to match, got "
+            f"{image_frequency} and {image_action_frequency}."
+        )
+    lowdim_frequency = _require_frequency(policy_io.lowdim_frequency, "policy_io.obs.joint_state_lowdim.target_frequency")
+    action_frequency = _require_frequency(policy_io.action_frequency, "policy_io.action.joint_action_lowdim.target_frequency")
+    if lowdim_frequency != action_frequency:
+        raise ValueError(
+            "SO101 deployment expects lowdim obs/action target frequencies to match, got "
+            f"{lowdim_frequency} and {action_frequency}."
+        )
+    derived_video_pipe_state_t = _derive_video_pipe_state_t(policy_io)
+    video_pipe_state_t = int(model_cfg.get("video_pipe_state_t", derived_video_pipe_state_t))
+    if video_pipe_state_t != derived_video_pipe_state_t:
+        raise ValueError(
+            "training.action_decoder.model.video_pipe_state_t does not match policy_io workspace_rgb horizons: "
+            f"{video_pipe_state_t} vs derived {derived_video_pipe_state_t}."
+        )
 
     resolved_stats_path = resolve_stats_path(explicit_stats_path=stats_path, action_data_dir=action_data_dir)
     resolved_stats_path = maybe_download_stats(
@@ -190,10 +242,20 @@ def build_deployment_config(
         image_horizon=policy_io.image_horizon,
         lowdim_horizon=policy_io.lowdim_horizon,
         action_horizon=policy_io.action_horizon,
+        image_frequency=image_frequency,
+        lowdim_frequency=lowdim_frequency,
+        action_frequency=action_frequency,
+        video_pipe_state_t=video_pipe_state_t,
+        network_config=dict(network_cfg),
         stats_path=resolved_stats_path,
     )
 
 
 def load_stats(path: Path) -> dict[str, Any]:
     with path.open() as f:
-        return json.load(f)
+        stats = json.load(f)
+    required = ("action/joint_action_lowdim", "obs/joint_state_lowdim")
+    missing = [key for key in required if key not in stats]
+    if missing:
+        raise ValueError(f"Statistics file {path} is missing required keys: {missing}")
+    return stats

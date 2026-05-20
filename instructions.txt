@@ -1,5 +1,3 @@
-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
-
 docker run --rm --gpus all --ipc=host --shm-size=32g \
     -v $PWD/checkpoints:/checkpoints \
     -v $PWD/hf-cache:/root/.cache/huggingface \
@@ -12,5 +10,5 @@ docker run --rm --gpus all --ipc=host --shm-size=32g \
     -e HF_STATS_FILENAME=dataset_statistics/so101_task1_2_stats.json \
     -e HF_STATS_REPO_TYPE=model \
     -e PREPULL_TEXT_ENCODER=0 \
-    so101-mimic-video-deploy:blackwell \
+    so101-mimic-video:blackwell \
     prepull

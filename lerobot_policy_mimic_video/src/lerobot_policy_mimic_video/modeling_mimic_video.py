@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pickle  # nosec
 from typing import Any
 
 import numpy as np
@@ -196,14 +197,9 @@ class MimicVideoPolicy(PreTrainedPolicy):
     def _load_prompt_embedding(config: MimicVideoPolicyConfig) -> torch.Tensor:
         prompt_embedding_path = os.environ.get("MIMIC_VIDEO_PROMPT_EMBEDDING_PATH")
         if prompt_embedding_path:
-            embedding = torch.load(prompt_embedding_path, map_location="cuda")
-            if isinstance(embedding, dict):
-                for key in ("prompt_embedding", "embedding", "obs/language_embedding"):
-                    if key in embedding:
-                        embedding = embedding[key]
-                        break
-            if not isinstance(embedding, torch.Tensor):
-                raise TypeError(f"Prompt embedding at {prompt_embedding_path} did not resolve to a tensor.")
+            with open(prompt_embedding_path, "rb") as f:
+                embedding = pickle.load(f)  # nosec
+            embedding = torch.from_numpy(embedding)
             return embedding.to(device="cuda", dtype=torch.bfloat16)
 
         if os.environ.get("MIMIC_VIDEO_ZERO_PROMPT_EMBEDDING") == "1":

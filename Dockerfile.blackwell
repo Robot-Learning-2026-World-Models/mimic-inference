@@ -1,20 +1,32 @@
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
+ARG CUDA_ARCH_LIST="10.0;12.0"
+ARG MAX_JOBS=16
+
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_CACHE_DIR=/root/.cache/uv \
+    PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
     TOKENIZERS_PARALLELISM=false \
     CUDA_DEVICE_MAX_CONNECTIONS=1 \
-    NVTE_FUSED_ATTN=0
+    NVTE_FUSED_ATTN=0 \
+    TORCH_CUDA_ARCH_LIST="${CUDA_ARCH_LIST}" \
+    NATTEN_CUDA_ARCH="${CUDA_ARCH_LIST}" \
+    NATTEN_N_WORKERS="${MAX_JOBS}" \
+    MAX_JOBS="${MAX_JOBS}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     ca-certificates \
+    cmake \
     curl \
     ffmpeg \
     git \
     libglib2.0-0 \
     libgl1 \
     libvulkan1 \
+    ninja-build \
+    pkg-config \
     python3.10 \
     python3.10-dev \
     python3.10-venv \
@@ -28,24 +40,21 @@ COPY . .
 
 WORKDIR /workspace/so101-mimic-video-deploy/mimic-video/model
 
-# Install all cosmos deps from the original index. torch 2.6.0 and the pre-built
-# CUDA extensions installed here lack sm_120 kernels — replaced below.
-RUN uv sync --extra cu126
+# Install base Cosmos deps only. The cu126 extra is intentionally avoided here
+# because its torch/extension wheels do not contain Blackwell kernels.
+RUN uv sync
+RUN uv pip install --python .venv/bin/python pip
 
-# torch 2.8.0 is the first release with sm_120 (RTX 5090 / Blackwell consumer) kernels.
-RUN .venv/bin/pip install torch==2.8.0 torchvision==0.23.0 \
+# torch 2.8.0 provides CUDA 12.8 wheels with Blackwell support.
+RUN .venv/bin/python -m pip install torch==2.8.0 torchvision==0.23.0 \
         --index-url https://download.pytorch.org/whl/cu128 \
         --force-reinstall
-
-# Compile source-built extensions only for sm_120 to keep build time manageable.
-ENV TORCH_CUDA_ARCH_LIST="12.0" \
-    MAX_JOBS=16
 
 # flash-attn: use windreamer's pre-built FA3 wheels (sm_120 included).
 # FA3's flash_attn_interface.py installs at the top of site-packages rather than
 # inside the flash_attn/ package that cosmos imports from, so we overwrite that
 # file after installing to keep 'from flash_attn.flash_attn_interface import ...' working.
-RUN .venv/bin/pip install --no-deps --force-reinstall \
+RUN .venv/bin/python -m pip install --no-deps --force-reinstall \
         "https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.05.20-072445f/flash_attn_3-3.0.0%2B20260519.cu128torch280cxx11abitrue.8a8b2f-cp39-abi3-linux_x86_64.whl" && \
     .venv/bin/python - <<'EOF'
 import site, shutil, os
@@ -54,19 +63,33 @@ shutil.copy(os.path.join(sp, "flash_attn_interface.py"),
             os.path.join(sp, "flash_attn", "flash_attn_interface.py"))
 EOF
 
-# natten: source-only on PyPI; bump to latest 0.21.x patch.
-RUN .venv/bin/pip install natten==0.21.6 --no-binary natten --no-build-isolation --force-reinstall
+# natten: build locally so Docker builds without GPU access still include the
+# requested Blackwell CUDA kernels. NATTEN_CUDA_ARCH is intentionally separate
+# from TORCH_CUDA_ARCH_LIST; NATTEN's build does not consume the torch variable.
+RUN .venv/bin/python -m pip install natten==0.21.6 --no-binary natten --no-build-isolation --force-reinstall --no-deps
 
-# transformer-engine: 2.x on PyPI includes Blackwell support.
-RUN .venv/bin/pip install transformer-engine --force-reinstall
+# transformer-engine: request PyTorch bindings explicitly; the base cu126
+# package is too old for Blackwell.
+RUN .venv/bin/python -m pip install "transformer-engine[pytorch]==2.1.0" --no-build-isolation --force-reinstall
 
 # apex: not on PyPI, build from source.
-RUN .venv/bin/pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
+RUN .venv/bin/python -m pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
         --config-settings "--build-option=--cpp_ext" \
         --config-settings "--build-option=--cuda_ext" \
         "git+https://github.com/NVIDIA/apex"
 
 RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]" && uv pip install -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
+
+RUN .venv/bin/python - <<'EOF'
+import torch
+assert torch.__version__.startswith("2.8.0"), torch.__version__
+assert torch.version.cuda and torch.version.cuda.startswith("12.8"), torch.version.cuda
+assert "sm_100" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
+assert "sm_120" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
+import natten
+assert natten.HAS_LIBNATTEN, "NATTEN was installed without libnatten CUDA kernels"
+import transformer_engine.pytorch  # noqa: F401
+EOF
 
 WORKDIR /workspace/so101-mimic-video-deploy
 ENV PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/bin:${PATH}" \

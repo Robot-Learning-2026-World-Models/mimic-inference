@@ -3,7 +3,7 @@ docker run --rm --gpus all --ipc=host --shm-size=32g \
     -v $PWD/hf-cache:/root/.cache/huggingface \
     -e HF_HOME=/root/.cache/huggingface \
     -e HF_TOKEN=$HF_TOKEN \
-    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e TRAINING_CONFIG=/workspace/mimic-inference/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
     -e MIMIC_VIDEO_HF_REPO_ID=mimicinferencegobrrrr/mimic-finetune \
     -e VIDEO_MODEL_HF_FILENAME=video_backbone/iter_000002800_fused.pt \
     -e ACTION_MODEL_HF_FILENAME=action_decoder/iter_000001850.pt \

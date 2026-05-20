@@ -2,28 +2,19 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_CACHE_DIR=/root/.cache/uv \
-    PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
     TOKENIZERS_PARALLELISM=false \
     CUDA_DEVICE_MAX_CONNECTIONS=1 \
-    NVTE_FUSED_ATTN=0 \
-    TORCH_CUDA_ARCH_LIST="12.0" \
-    NVTE_CUDA_ARCHS="120" \
-    NVTE_BUILD_THREADS_PER_JOB=1 \
-    MAX_JOBS=4
+    NVTE_FUSED_ATTN=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     ca-certificates \
-    cmake \
     curl \
     ffmpeg \
     git \
     libglib2.0-0 \
     libgl1 \
     libvulkan1 \
-    ninja-build \
-    pkg-config \
     python3.10 \
     python3.10-dev \
     python3.10-venv \
@@ -32,83 +23,62 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-WORKDIR /workspace/so101-mimic-video-deploy
+WORKDIR /workspace/mimic-inference
 COPY . .
 
-WORKDIR /workspace/so101-mimic-video-deploy/mimic-video/model
+WORKDIR /workspace/mimic-inference/mimic-video/model
 
-# Install base Cosmos deps only. The cu126 extra installs torch 2.6.0 and
-# CUDA-extension wheels that do not support RTX 5090 / sm_120.
-RUN uv sync
-RUN uv pip install --python .venv/bin/python pip
+# Install all cosmos deps from the original index. torch 2.6.0 and the pre-built
+# CUDA extensions installed here lack sm_120 kernels — replaced below.
+RUN uv sync --extra cu126
 
-# Install app/runtime deps before pinning the CUDA 12.8 torch stack. Later local
-# installs use --no-deps so they cannot replace torch.
-RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]"
-
-# torch 2.8.0 provides CUDA 12.8 wheels with sm_120 support.
-RUN .venv/bin/python -m pip install torch==2.8.0 torchvision==0.23.0 \
+# torch 2.8.0 is the first release with sm_120 (RTX 5090 / Blackwell consumer) kernels.
+RUN uv pip install torch==2.8.0 torchvision==0.23.0 \
         --index-url https://download.pytorch.org/whl/cu128 \
         --force-reinstall
 
-# flash-attn: use windreamer's pre-built FA3 wheel. It installs
-# flash_attn_interface.py at top-level site-packages, while Cosmos imports
-# flash_attn.flash_attn_interface, so create a tiny compatibility package.
-RUN .venv/bin/python -m pip install --no-deps --force-reinstall \
+# Compile source-built extensions only for sm_120 to keep build time manageable.
+ENV TORCH_CUDA_ARCH_LIST="12.0" \
+    MAX_JOBS=16
+
+# flash-attn: use windreamer's pre-built FA3 wheels (sm_120 included).
+# FA3's flash_attn_interface.py installs at the top of site-packages rather than
+# inside the flash_attn/ package that cosmos imports from, so we overwrite that
+# file after installing to keep 'from flash_attn.flash_attn_interface import ...' working.
+RUN uv pip install --no-deps --force-reinstall \
         "https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.05.20-072445f/flash_attn_3-3.0.0%2B20260519.cu128torch280cxx11abitrue.8a8b2f-cp39-abi3-linux_x86_64.whl" && \
     .venv/bin/python - <<'EOF'
-import os
-import site
+import site, shutil, os
 sp = next(p for p in site.getsitepackages() if "site-packages" in p)
-pkg = os.path.join(sp, "flash_attn")
-os.makedirs(pkg, exist_ok=True)
-open(os.path.join(pkg, "__init__.py"), "a").close()
-with open(os.path.join(pkg, "flash_attn_interface.py"), "w") as f:
-    f.write("from flash_attn_interface import *\n")
-from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
+shutil.copy(os.path.join(sp, "flash_attn_interface.py"),
+            os.path.join(sp, "flash_attn", "flash_attn_interface.py"))
 EOF
 
-# NATTEN has a prebuilt wheel for torch 2.8.0 + CUDA 12.8. Do not source-build
-# it inside Docker.
-RUN .venv/bin/python -m pip install --force-reinstall --no-deps \
-        "natten==0.21.1+torch280cu128" \
-        -f https://whl.natten.org
+# pyproject.toml pins natten/transformer-engine/apex/flash-attn under
+# tool.uv.no-build-package (to use prebuilt cu126 wheels from the cosmos index),
+# which blocks `uv pip` from compiling them. Install standalone pip and use it
+# for these source builds so they bypass uv's project config.
+RUN uv pip install pip
 
-# transformer-engine: install explicit package pieces with --no-deps so pip
-# cannot replace torch 2.8.0+cu128.
-RUN CUDNN_PATH="$(pwd)/.venv/lib/python3.10/site-packages/nvidia/cudnn" && \
-    CUDNN_HOME="${CUDNN_PATH}" \
-    LD_LIBRARY_PATH="${CUDNN_PATH}/lib:${LD_LIBRARY_PATH:-}" \
-    NVTE_FRAMEWORK=pytorch \
-    .venv/bin/python -m pip install --no-build-isolation --no-deps \
-        transformer-engine-cu12==2.1.0 \
-        transformer-engine-torch==2.1.0 \
-        transformer-engine==2.1.0
+# natten: source-only on PyPI; bump to latest 0.21.x patch.
+RUN .venv/bin/pip install natten==0.21.6 --no-binary natten --no-build-isolation --force-reinstall
 
-RUN . .venv/bin/activate && uv pip install --no-deps -e /workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video
+# transformer-engine: 2.x on PyPI includes Blackwell support.
+RUN .venv/bin/pip install transformer-engine --force-reinstall
 
-RUN .venv/bin/python - <<'EOF'
-import torch
-assert torch.__version__.startswith("2.8.0"), torch.__version__
-assert torch.version.cuda and torch.version.cuda.startswith("12.8"), torch.version.cuda
-assert "sm_120" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
-from flash_attn.flash_attn_interface import flash_attn_func  # noqa: F401
-import natten
-assert natten.HAS_LIBNATTEN, "NATTEN was installed without libnatten CUDA kernels"
-import transformer_engine.pytorch  # noqa: F401
-from cosmos_predict2.pipelines.video2world import Video2WorldPipeline  # noqa: F401
-from cosmos_predict2.pipelines.world2action import World2ActionPipeline  # noqa: F401
-from lerobot_policy_mimic_video.grpc_policy_server import MimicVideoPolicyServer  # noqa: F401
-EOF
+# apex: not on PyPI, build from source.
+RUN .venv/bin/pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
+        --config-settings "--build-option=--cpp_ext" \
+        --config-settings "--build-option=--cuda_ext" \
+        "git+https://github.com/NVIDIA/apex"
 
-WORKDIR /workspace/so101-mimic-video-deploy
-ENV PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/bin:${PATH}" \
-    PYTHONPATH="/workspace/so101-mimic-video-deploy/mimic-video/model" \
-    CUDNN_PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/lib/python3.10/site-packages/nvidia/cudnn" \
-    CUDNN_HOME="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/lib/python3.10/site-packages/nvidia/cudnn" \
-    LD_LIBRARY_PATH="/workspace/so101-mimic-video-deploy/mimic-video/model/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}"
+RUN . .venv/bin/activate && uv pip install "huggingface_hub[cli]" "lerobot[async]" && uv pip install -e /workspace/mimic-inference/lerobot_policy_mimic_video
+
+WORKDIR /workspace/mimic-inference
+ENV PATH="/workspace/mimic-inference/mimic-video/model/.venv/bin:${PATH}" \
+    PYTHONPATH="/workspace/mimic-inference/mimic-video/model"
 
 EXPOSE 8000 8080
 
-ENTRYPOINT ["/workspace/so101-mimic-video-deploy/entrypoint.sh"]
+ENTRYPOINT ["/workspace/mimic-inference/entrypoint.sh"]
 CMD ["policy-server"]

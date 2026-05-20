@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /workspace/so101-mimic-video-deploy
+cd /workspace/mimic-inference
 source mimic-video/model/.venv/bin/activate
-export PYTHONPATH="/workspace/so101-mimic-video-deploy/mimic-video/model:${PYTHONPATH:-}"
+export PYTHONPATH="/workspace/mimic-inference/mimic-video/model:${PYTHONPATH:-}"
 
 mode="${1:-policy-server}"
 shift || true

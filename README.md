@@ -9,13 +9,13 @@ This repo keeps deployment separate from the training/research repo and vendors 
 Build the robot action deployment image:
 
 ```bash
-docker build -t so101-mimic-video-deploy .
+docker build -t so101-mimic-video:blackwell .
 ```
 
 For RTX 5090 / CUDA 12.8 hosts, build the Blackwell image instead:
 
 ```bash
-docker build -f Dockerfile.blackwell -t so101-mimic-video-deploy:blackwell .
+docker build -f Dockerfile.blackwell -t so101-mimic-video:blackwell .
 ```
 
 The Blackwell image defaults to RTX 5090 (`sm_120`) to keep CUDA extension
@@ -25,16 +25,16 @@ builds small. For B200/GB200-style Blackwell, override both arch args:
 docker build -f Dockerfile.blackwell \
   --build-arg CUDA_ARCH_LIST="10.0" \
   --build-arg NVTE_CUDA_ARCHS="100" \
-  -t so101-mimic-video-deploy:blackwell .
+  -t so101-mimic-video:blackwell .
 ```
 
 Pull the dataset stats (NOT NEEDED UNLESS WE NEED TO FUCKING RECOMPUTE THE MOTHERFUCKINGS STATS):
 ```
 docker run --rm --gpus all --ipc=host --shm-size=32g \
     -v $PWD/hf-cache:/root/.cache/huggingface \
-    -v $PWD/data:/workspace/so101-mimic-video-deploy/data \
+    -v $PWD/data:/workspace/mimic-inference/data \
     -e HF_HOME=/root/.cache/huggingface \
-    so101-mimic-video-deploy \
+    so101-mimic-video:blackwell \
     python scripts/prepare_so101_inference_stats.py \
       --config mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml
 ```
@@ -42,21 +42,21 @@ docker run --rm --gpus all --ipc=host --shm-size=32g \
 Pull weights (DO THIS IN A FUCKING REPO WITH SPACE):
 ```
 docker run --rm --gpus all --ipc=host --shm-size=32g \
-    -v $PWD/scripts/prepull_mimic_video_assets.py:/workspace/so101-mimic-video-deploy/scripts/prepull_mimic_video_assets.py:ro \
-    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video/training_config.py:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video/training_config.py:ro \
+    -v $PWD/scripts/prepull_mimic_video_assets.py:/workspace/mimic-inference/scripts/prepull_mimic_video_assets.py:ro \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video/training_config.py:/workspace/mimic-inference/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video/training_config.py:ro \
     -v $PWD/checkpoints:/checkpoints \
     -v $PWD/hf-cache:/root/.cache/huggingface \
     -e HF_HOME=/root/.cache/huggingface \
     -e HF_TOKEN=$HF_TOKEN \
     -e HF_HUB_ETAG_TIMEOUT=60 \
     -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
-    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e TRAINING_CONFIG=/workspace/mimic-inference/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
     -e MIMIC_VIDEO_HF_REPO_ID=mimicinferencegobrrrr/mimic-finetune \
     -e VIDEO_MODEL_HF_FILENAME=video_backbone/iter_000002800_fused.pt \
     -e ACTION_MODEL_HF_FILENAME=action_decoder/iter_000001850.pt \
     -e HF_STATS_FILENAME=dataset_statistics/so101_task1_2_stats.json \
     -e HF_STATS_REPO_TYPE=model \
-    so101-mimic-video-deploy \
+    so101-mimic-video:blackwell \
     python scripts/prepull_mimic_video_assets.py
 ```
 
@@ -69,9 +69,9 @@ Generate prompt embeddings once, then use those at server startup instead of loa
 ```
 docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
     -v $PWD/checkpoints:/checkpoints \
-    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
-    -v $PWD/scripts/cache_mimic_video_prompt_embedding.py:/workspace/so101-mimic-video-deploy/scripts/cache_mimic_video_prompt_embedding.py:ro \
-    so101-mimic-video-deploy \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/mimic-inference/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
+    -v $PWD/scripts/cache_mimic_video_prompt_embedding.py:/workspace/mimic-inference/scripts/cache_mimic_video_prompt_embedding.py:ro \
+    so101-mimic-video:blackwell \
     python scripts/cache_mimic_video_prompt_embedding.py \
       --tasks task1 task2 \
       --prompts "alternate language prompt text here" \
@@ -84,13 +84,13 @@ placing it under `/checkpoints`:
 ```
 docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
     -p 8080:8080 \
-    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
-    -v $PWD/mimic-video/configs/so101:/workspace/so101-mimic-video-deploy/mimic-video/configs/so101:ro \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/mimic-inference/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
+    -v $PWD/mimic-video/configs/so101:/workspace/mimic-inference/mimic-video/configs/so101:ro \
     -v $PWD/checkpoints:/checkpoints \
     -v $PWD/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle:/prompt_embedding.pickle:ro \
     -e NVIDIA_VISIBLE_DEVICES=all \
     -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e TRAINING_CONFIG=/workspace/mimic-inference/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
     -e VIDEO_MODEL_PATH=/checkpoints/iter_000002800_fused.pt \
     -e ACTION_MODEL_PATH=/checkpoints/iter_000001850.pt \
     -e STATS_PATH=/checkpoints/dataset_statistics/so101_task1_2_stats.json \
@@ -98,7 +98,7 @@ docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
     -e MIMIC_VIDEO_TASK=task1 \
     -e PREPULL=0 \
     -e FPS=30 \
-    so101-mimic-video-deploy:blackwell \
+    so101-mimic-video:blackwell \
     policy-server
 ```
 
@@ -109,7 +109,7 @@ docker run --rm \
     -v $PWD/hf-cache:/root/.cache/huggingface \
     -e HF_HOME=/root/.cache/huggingface \
     -e HF_TOKEN=$HF_TOKEN \
-    so101-mimic-video-deploy \
+    so101-mimic-video:blackwell \
     hf download mimicinferencegobrrrr/mimic-finetune \
       video_backbone/tokenizer/tokenizer.pth \
       --repo-type model \
@@ -120,14 +120,14 @@ Start the server:
 ```
 docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
     -p 8080:8080 \
-    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
-    -v $PWD/mimic-video/configs/so101:/workspace/so101-mimic-video-deploy/mimic-video/configs/so101:ro \
+    -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/mimic-inference/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro \
+    -v $PWD/mimic-video/configs/so101:/workspace/mimic-inference/mimic-video/configs/so101:ro \
     -v $PWD/checkpoints:/checkpoints \
-    -v $PWD/checkpoints/video_backbone:/workspace/so101-mimic-video-deploy/mimic-video/model/checkpoints/video_backbone:ro \
-    -v $PWD/checkpoints/text_encoder/text_encoder:/workspace/so101-mimic-video-deploy/mimic-video/model/checkpoints/text_encoder:ro \
+    -v $PWD/checkpoints/video_backbone:/workspace/mimic-inference/mimic-video/model/checkpoints/video_backbone:ro \
+    -v $PWD/checkpoints/text_encoder/text_encoder:/workspace/mimic-inference/mimic-video/model/checkpoints/text_encoder:ro \
     -e NVIDIA_VISIBLE_DEVICES=all \
     -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    -e TRAINING_CONFIG=/workspace/so101-mimic-video-deploy/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
+    -e TRAINING_CONFIG=/workspace/mimic-inference/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml \
     -e VIDEO_MODEL_PATH=/checkpoints/iter_000002800_fused.pt \
     -e ACTION_MODEL_PATH=/checkpoints/iter_000001900.pt \
     -e STATS_PATH=/checkpoints/dataset_statistics/so101_task1_2_stats.json \
@@ -135,13 +135,13 @@ docker run --rm --runtime=nvidia --ipc=host --shm-size=64g \
     -e MIMIC_VIDEO_TASK=task1 \
     -e PREPULL=0 \
     -e FPS=30 \
-    so101-mimic-video-deploy \
+    so101-mimic-video:blackwell \
     policy-server
 ```
 
 Smoke test client:
 ```
-docker run --rm --network host     -v $PWD/scripts/smoke_mimic_video_grpc_client.py:/workspace/so101-mimic-video-deploy/scripts/smoke_mimic_video_grpc_client.py:ro     -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/so101-mimic-video-deploy/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro     so101-mimic-video-deploy     python scripts/smoke_mimic_video_grpc_client.py       --server-address 127.0.0.1:8080       --raw-image-horizon 13       --actions-per-chunk 3       --timeout 600
+docker run --rm --network host     -v $PWD/scripts/smoke_mimic_video_grpc_client.py:/workspace/mimic-inference/scripts/smoke_mimic_video_grpc_client.py:ro     -v $PWD/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:/workspace/mimic-inference/lerobot_policy_mimic_video/src/lerobot_policy_mimic_video:ro     mimic-inference     python scripts/smoke_mimic_video_grpc_client.py       --server-address 127.0.0.1:8080       --raw-image-horizon 13       --actions-per-chunk 3       --timeout 600
 ```
 
 Run the LeRobot async policy server on the GPU machine:
@@ -150,7 +150,7 @@ Run the LeRobot async policy server on the GPU machine:
 docker run --rm --gpus all --ipc=host --shm-size=16g -p 8080:8080 \
   -v /host/checkpoints:/checkpoints:ro \
   -v /host/data:/data:ro \
-  so101-mimic-video-deploy policy-server
+  so101-mimic-video:blackwell policy-server
 ```
 
 ## Run LeRobot Async

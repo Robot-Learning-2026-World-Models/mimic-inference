@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import torch
 from einops import rearrange
+from omegaconf import DictConfig
+
 try:
     from lerobot.policies import PreTrainedPolicy
 except ImportError:
@@ -453,12 +455,14 @@ class MimicVideoPolicy(PreTrainedPolicy):
         cfg.model.config.pipe_config.xattn_layer_idx = config.xattn_layer_idx
         cfg.model.config.pipe_config.scheduler.num_denoising_steps = config.action_denoising_steps
         network_config = getattr(config, "_mimic_video_network_config", {})
-        for key, value in network_config.items():
-            if hasattr(cfg.model.config.pipe_config.net, key):
-                setattr(cfg.model.config.pipe_config.net, key, value)
+        MimicVideoPolicy._apply_action_network_config(
+            cfg.model.config.pipe_config.net,
+            network_config,
+        )
         cfg.model.config.pipe_config.net.max_horizon = config.max_horizon
         cfg.model.config.pipe_config.net.in_channels = config.action_dim
         cfg.model.config.pipe_config.net.out_channels = config.action_dim
+        MimicVideoPolicy._validate_action_network_config(cfg.model.config.pipe_config.net, config, network_config)
 
         video2world_pipe = Video2WorldPipeline.from_config(
             config=cfg.model.config.video_pipe_config,
@@ -475,6 +479,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
             dtype=torch.bfloat16,
         )
         stats = load_stats(config.stats_path)
+        MimicVideoPolicy._validate_stats_config(stats, config)
         world2action_pipe.normalizer.build_from_stats(
             stats,
             normalization_types={
@@ -489,3 +494,95 @@ class MimicVideoPolicy(PreTrainedPolicy):
             dtype=torch.bfloat16,
         )
         return Video2World2ActionPipeline(video2world_pipe, world2action_pipe).cuda().eval()
+
+    @staticmethod
+    def _apply_action_network_config(net_config: Any, network_config: dict[str, Any]) -> None:
+        skipped = []
+        for key, value in network_config.items():
+            if key in {"sac_mode", "sac_every_n_blocks"}:
+                continue
+            if hasattr(net_config, key):
+                setattr(net_config, key, value)
+            else:
+                skipped.append(key)
+        if skipped:
+            print(
+                "mimic-video: skipped unsupported action network config keys: "
+                f"{', '.join(sorted(skipped))}",
+                file=sys.stdout,
+                flush=True,
+            )
+
+    @staticmethod
+    def _net_config_value(net_config: Any, key: str) -> Any:
+        if isinstance(net_config, DictConfig):
+            return net_config.get(key)
+        return getattr(net_config, key)
+
+    @staticmethod
+    def _validate_action_network_config(
+        net_config: Any,
+        config: MimicVideoPolicyConfig,
+        network_config: dict[str, Any],
+    ) -> None:
+        expected = {
+            "max_horizon": config.max_horizon,
+            "in_channels": config.action_dim,
+            "out_channels": config.action_dim,
+        }
+        for key, value in network_config.items():
+            if key in {"sac_mode", "sac_every_n_blocks"} or not hasattr(net_config, key):
+                continue
+            expected[key] = value
+        for key, value in expected.items():
+            actual = MimicVideoPolicy._net_config_value(net_config, key)
+            if actual != value:
+                raise RuntimeError(f"Action network config mismatch for {key}: expected {value}, got {actual}.")
+
+        summary_keys = (
+            "max_horizon",
+            "in_channels",
+            "out_channels",
+            "model_channels",
+            "num_blocks",
+            "num_heads",
+            "crossattn_emb_channels",
+            "pair_timestep_feature_rank",
+        )
+        summary = {key: MimicVideoPolicy._net_config_value(net_config, key) for key in summary_keys}
+        print(
+            "mimic-video: resolved deployment "
+            f"experiment={config.experiment_name} "
+            f"video_state_t={config.video_pipe_state_t} "
+            f"xattn_layer_idx={config.xattn_layer_idx} "
+            f"image_horizon={config.image_horizon} "
+            f"lowdim_horizon={config.lowdim_horizon} "
+            f"action_horizon={config.horizon} "
+            f"action_denoising_steps={config.action_denoising_steps} "
+            f"action_net={summary}",
+            file=sys.stdout,
+            flush=True,
+        )
+
+    @staticmethod
+    def _stats_shape(stats: dict[str, Any], key: str, field: str = "mean") -> list[int]:
+        value = stats[key][field]
+        shape = []
+        while isinstance(value, list):
+            shape.append(len(value))
+            value = value[0] if value else None
+        return shape
+
+    @staticmethod
+    def _validate_stats_config(stats: dict[str, Any], config: MimicVideoPolicyConfig) -> None:
+        expected_shapes = {
+            "action/joint_action_lowdim": [config.horizon, config.action_dim],
+            "obs/joint_state_lowdim": [config.lowdim_horizon, config.action_dim],
+        }
+        for key, expected in expected_shapes.items():
+            actual = MimicVideoPolicy._stats_shape(stats, key)
+            if actual != expected:
+                raise RuntimeError(
+                    f"Statistics shape mismatch for {key}: expected mean shape {expected}, got {actual} "
+                    f"from {config.stats_path}."
+                )

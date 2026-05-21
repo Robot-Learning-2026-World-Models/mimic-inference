@@ -9,6 +9,7 @@ export VIDEO_MODEL_PATH="/media/baraq/Transfer/idm_long_700_backbone.pt"
 export ACTION_MODEL_PATH="/media/baraq/Transfer/idm_long_700.pt"
 export STATS_PATH="/media/baraq/Transfer/idm_long_700_stats.json"
 export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
+export MIMIC_VIDEO_TASK=task2
 export PREPULL=0
 export HOST=127.0.0.1
 export PORT=8080

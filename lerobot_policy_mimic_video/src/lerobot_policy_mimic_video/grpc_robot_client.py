@@ -75,12 +75,12 @@ class MimicVideoRobotClient(RobotClient):
             observation = TimedObservation(
                 timestamp=frame_timestamp,
                 observation=raw_observation,
-                timestep=max(latest_action, 0),
+                timestep=max(latest_action + 1, 0),
+                must_go=True,
             )
             obs_capture_time = time.perf_counter() - start_time
 
             with self.action_queue_lock:
-                observation.must_go = self.must_go.is_set() and self.action_queue.empty()
                 current_queue_size = self.action_queue.qsize()
             _ = self.send_observation(observation)
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")

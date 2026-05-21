@@ -8,10 +8,10 @@ export PATH="${REPO_ROOT}/mimic-video/model/.venv/bin:${PATH}"
 export PYTHONPATH="${REPO_ROOT}/lerobot_policy_mimic_video/src:${REPO_ROOT}/mimic-video/model"
 export COSMOS_PREDICT2_ARGS="--checkpoints ${REPO_ROOT}/checkpoints"
 
-export TRAINING_CONFIG="${TRAINING_CONFIG:-${REPO_ROOT}/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml}"
-export VIDEO_MODEL_PATH="${VIDEO_MODEL_PATH:-${REPO_ROOT}/checkpoints/iter_000002800_fused.pt}"
-export ACTION_MODEL_PATH="${ACTION_MODEL_PATH:-${REPO_ROOT}/checkpoints/iter_000001850.pt}"
-export STATS_PATH="${STATS_PATH:-${REPO_ROOT}/checkpoints/dataset_statistics/so101_task1_2_stats.json}"
+export TRAINING_CONFIG="${TRAINING_CONFIG:-${REPO_ROOT}/mimic-video/configs/so101/idm_large_all_tasks_dirty_4500.yaml}"
+export VIDEO_MODEL_PATH="${VIDEO_MODEL_PATH:-${REPO_ROOT}/checkpoints/rev3/iter_000004500_fused.pt}"
+export ACTION_MODEL_PATH="${ACTION_MODEL_PATH:-${REPO_ROOT}/checkpoints/rev3/iter_000001200.pt}"
+export STATS_PATH="${STATS_PATH:-${REPO_ROOT}/checkpoints/rev3/dataset_stats.json}"
 
 export MIMIC_VIDEO_TASK="${MIMIC_VIDEO_TASK:-task1}"
 if [[ -z "${MIMIC_VIDEO_PROMPT_EMBEDDING_PATH:-}" ]]; then

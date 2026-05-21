@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import pickle  # nosec
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -52,6 +53,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
         self.config = config
         self.pipeline = self._load_pipeline(config)
         self.prompt_embedding = self._load_prompt_embedding(config)
+        self._preprocessed_input_notice_printed = False
 
     def _apply_deployment_config(self, config: MimicVideoPolicyConfig) -> None:
         dc = self.deployment_config
@@ -191,17 +193,48 @@ class MimicVideoPolicy(PreTrainedPolicy):
         return run_dir
 
     def _process_image(self, image: np.ndarray) -> np.ndarray:
-        pil_image = Image.fromarray(image.astype(np.uint8), "RGB")
-        x, y = self.config.crop_x, self.config.crop_y
-        w, h = self.config.crop_width, self.config.crop_height
-        pil_image = pil_image.crop((x, y, x + w, y + h))
-        pil_image = pil_image.resize((self.config.image_width, self.config.image_height), Image.Resampling.BILINEAR)
-        image = np.asarray(pil_image)
-        tensor = rearrange(image, "h w c -> c h w")[:, None, :, :]
+        if self._frame_matches_target_resolution(image):
+            resized = image.astype(np.uint8, copy=False)
+        else:
+            pil_image = Image.fromarray(image.astype(np.uint8), "RGB")
+            x, y = self.config.crop_x, self.config.crop_y
+            w, h = self.config.crop_width, self.config.crop_height
+            pil_image = pil_image.crop((x, y, x + w, y + h))
+            pil_image = pil_image.resize((self.config.image_width, self.config.image_height), Image.Resampling.BILINEAR)
+            resized = np.asarray(pil_image)
+        tensor = rearrange(resized, "h w c -> c h w")[:, None, :, :]
         return 2.0 * (tensor.astype(np.float32) / 255.0 - 0.5)
+
+    def _process_image_for_visualization(self, image: np.ndarray) -> np.ndarray:
+        processed = self._process_image(image)
+        frame = processed[:, 0]
+        frame = np.moveaxis(frame, 0, -1)
+        return np.clip((frame + 1.0) * 127.5, 0, 255).astype(np.uint8)
 
     def _image_context_from_batch(self, batch: dict[str, torch.Tensor]) -> np.ndarray:
         images = self._images_from_batch(batch)
+        selected = self._select_image_context_frames(images)
+        return np.concatenate([self._process_image(image) for image in selected], axis=1)
+
+    def image_debug_frames_from_batch(self, batch: dict[str, torch.Tensor]) -> tuple[list[np.ndarray], list[np.ndarray], bool]:
+        images = self._images_from_batch(batch)
+        selected = self._select_image_context_frames(images)
+        processed = [self._process_image_for_visualization(image) for image in selected]
+        return images, processed, self._can_use_preprocessed_image_window(images)
+
+    def _select_image_context_frames(self, images: list[np.ndarray]) -> list[np.ndarray]:
+        if self._can_use_preprocessed_image_window(images):
+            if not self._preprocessed_input_notice_printed:
+                print(
+                    "mimic-video: received frame window already matches target preprocessing "
+                    f"({self.config.image_width}x{self.config.image_height} at {self.config.image_frequency}fps); "
+                    "skipping crop/resize and temporal subsampling.",
+                    file=sys.stdout,
+                    flush=True,
+                )
+                self._preprocessed_input_notice_printed = True
+            return images
+
         step = self.config.input_frequency // self.config.image_frequency
         raw_horizon = 1 + (self.config.image_horizon - 1) * step
         if len(images) < raw_horizon:
@@ -212,7 +245,13 @@ class MimicVideoPolicy(PreTrainedPolicy):
                 f"Expected {self.config.image_horizon} selected image frames, got {len(selected)} "
                 f"from raw_horizon={raw_horizon}, step={step}."
             )
-        return np.concatenate([self._process_image(image) for image in selected], axis=1)
+        return selected
+
+    def _can_use_preprocessed_image_window(self, images: list[np.ndarray]) -> bool:
+        return len(images) == self.config.image_horizon and all(self._frame_matches_target_resolution(image) for image in images)
+
+    def _frame_matches_target_resolution(self, image: np.ndarray) -> bool:
+        return image.shape[:2] == (self.config.image_height, self.config.image_width)
 
     def _images_from_batch(self, batch: dict[str, torch.Tensor]) -> list[np.ndarray]:
         if self.config.camera_key not in batch:

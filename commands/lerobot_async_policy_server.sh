@@ -77,6 +77,12 @@ fi
 if [[ -n "${MIMIC_VIDEO_DEBUG_RUN_NAME:-}" ]]; then
   EXTRA_SERVER_ARGS+=(--debug_run_name="${MIMIC_VIDEO_DEBUG_RUN_NAME}")
 fi
+if [[ "${MIMIC_VIDEO_VISUALIZE_FRAMES:-0}" == "1" ]]; then
+  EXTRA_SERVER_ARGS+=(--visualize_frames=true)
+fi
+if [[ -n "${MIMIC_VIDEO_VISUALIZE_EVERY_N:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--visualize_every_n="${MIMIC_VIDEO_VISUALIZE_EVERY_N}")
+fi
 
 if [[ "${PREPULL}" != "0" ]]; then
   PREPULL_ENV_FILE="${PREPULL_ENV_FILE:-/tmp/mimic_video_assets.env}"

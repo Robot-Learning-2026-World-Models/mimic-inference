@@ -1,5 +1,7 @@
 import logging
 import pickle  # nosec
+import platform
+import threading
 import time
 from concurrent import futures
 from dataclasses import asdict, dataclass
@@ -9,6 +11,7 @@ from typing import Any
 
 import draccus
 import grpc
+import numpy as np
 import torch
 
 from lerobot.async_inference.configs import PolicyServerConfig
@@ -60,6 +63,8 @@ class MimicVideoPolicyServerConfig(PolicyServerConfig):
     debug_save_denoised_video: bool = False
     debug_output_dir: Path = Path("outputs")
     debug_run_name: str | None = None
+    visualize_frames: bool = False
+    visualize_every_n: int = 1
 
 
 def _raw_camera_key(policy_camera_key: str) -> str:
@@ -110,6 +115,131 @@ def _resolve_model_path(
         hf_revision=hf_revision,
         repo_type=hf_repo_type,
     ).resolve()
+
+
+class MimicVideoFrameVisualizer:
+    def __init__(self, *, raw_fps: int, processed_fps: int):
+        self.raw_fps = raw_fps
+        self.processed_fps = processed_fps
+        self._lock = threading.Lock()
+        self._fig = None
+        self._axes = None
+        self._artists = []
+        self._column_count = 0
+
+    def update(
+        self,
+        *,
+        raw_frames: list[np.ndarray],
+        processed_frames: list[np.ndarray],
+        timestep: int,
+        preprocessed_input: bool,
+    ) -> None:
+        if not raw_frames and not processed_frames:
+            return
+        with self._lock:
+            try:
+                self._ensure_figure(max(len(raw_frames), len(processed_frames), 1))
+                self._draw(raw_frames, processed_frames, timestep, preprocessed_input)
+            except Exception as exc:  # pragma: no cover - visual aid only
+                logging.warning("Disabling mimic-video frame visualizer after error: %s", exc)
+                self.close()
+                raise
+
+    def _ensure_figure(self, column_count: int) -> None:
+        if self._fig is not None and self._column_count == column_count:
+            return
+        if self._fig is not None:
+            self.close()
+        if platform.system() == "Darwin":
+            import matplotlib
+
+            matplotlib.use("Qt5Agg")
+        import matplotlib.pyplot as plt
+
+        plt.ion()
+        self._fig, self._axes = plt.subplots(2, column_count, figsize=(max(8, column_count * 1.9), 5.0))
+        self._axes = np.asarray(self._axes).reshape(2, column_count)
+        if self._fig.canvas.manager is not None:
+            self._fig.canvas.manager.set_window_title("mimic-video frame visualizer")
+        self._fig.set_facecolor((0.12, 0.12, 0.12))
+        self._artists = []
+        for row in range(2):
+            row_artists = []
+            for ax in self._axes[row]:
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_facecolor((0.05, 0.05, 0.05))
+                artist = ax.imshow(np.zeros((8, 8, 3), dtype=np.uint8))
+                row_artists.append(artist)
+            self._artists.append(row_artists)
+        self._column_count = column_count
+
+    def _draw(
+        self,
+        raw_frames: list[np.ndarray],
+        processed_frames: list[np.ndarray],
+        timestep: int,
+        preprocessed_input: bool,
+    ) -> None:
+        assert self._fig is not None
+        assert self._axes is not None
+        raw_resolution = self._resolution_text(raw_frames)
+        processed_resolution = self._resolution_text(processed_frames)
+        status = "preprocessed input: crop/resize/subsample skipped" if preprocessed_input else "server preprocessing active"
+        self._fig.suptitle(f"mimic-video frame window | timestep {timestep} | {status}", color="white")
+        self._axes[0, 0].set_ylabel(
+            f"Raw\n{raw_resolution}\n{self.raw_fps} fps\n{len(raw_frames)} frames",
+            color="white",
+            rotation=0,
+            ha="right",
+            va="center",
+            labelpad=42,
+        )
+        self._axes[1, 0].set_ylabel(
+            f"Processed\n{processed_resolution}\n{self.processed_fps} fps\n{len(processed_frames)} frames",
+            color="white",
+            rotation=0,
+            ha="right",
+            va="center",
+            labelpad=42,
+        )
+        self._draw_row(0, raw_frames)
+        self._draw_row(1, processed_frames)
+        self._fig.canvas.draw_idle()
+        self._fig.canvas.flush_events()
+        import matplotlib.pyplot as plt
+
+        plt.pause(0.001)
+
+    def _draw_row(self, row: int, frames: list[np.ndarray]) -> None:
+        assert self._axes is not None
+        for column in range(self._column_count):
+            ax = self._axes[row, column]
+            artist = self._artists[row][column]
+            if column < len(frames):
+                artist.set_data(frames[column])
+                ax.set_visible(True)
+            else:
+                ax.set_visible(False)
+
+    @staticmethod
+    def _resolution_text(frames: list[np.ndarray]) -> str:
+        if not frames:
+            return "no frames"
+        height, width = frames[0].shape[:2]
+        return f"{width}x{height}"
+
+    def close(self) -> None:
+        if self._fig is None:
+            return
+        import matplotlib.pyplot as plt
+
+        plt.close(self._fig)
+        self._fig = None
+        self._axes = None
+        self._artists = []
+        self._column_count = 0
 
 
 class MimicVideoPolicyServer(PolicyServer):
@@ -191,6 +321,11 @@ class MimicVideoPolicyServer(PolicyServer):
         )
         start = time.perf_counter()
         self.policy = MimicVideoPolicy(policy_config).to(self.device).eval()
+        self.frame_visualizer = (
+            MimicVideoFrameVisualizer(raw_fps=self.config.fps, processed_fps=self.policy.config.image_frequency)
+            if self.config.visualize_frames
+            else None
+        )
         self.preprocessor = None
         self.postprocessor = None
         self.logger.info(
@@ -229,6 +364,19 @@ class MimicVideoPolicyServer(PolicyServer):
             observation["task"] = raw_observation["task"]
         self.last_processed_obs = observation_t
         prepare_time = time.perf_counter() - start_prepare
+
+        visualizer = getattr(self, "frame_visualizer", None)
+        if visualizer is not None and observation_t.get_timestep() % max(1, self.config.visualize_every_n) == 0:
+            try:
+                raw_frames, processed_frames, preprocessed_input = self.policy.image_debug_frames_from_batch(observation)
+                visualizer.update(
+                    raw_frames=raw_frames,
+                    processed_frames=processed_frames,
+                    timestep=observation_t.get_timestep(),
+                    preprocessed_input=preprocessed_input,
+                )
+            except Exception:
+                self.frame_visualizer = None
 
         start_inference = time.perf_counter()
         action_tensor = self._get_action_chunk(observation)

@@ -32,4 +32,5 @@ exec python -m lerobot_policy_mimic_video.grpc_robot_client \
   --actions_per_chunk="${ACTIONS_PER_CHUNK}" \
   --chunk_size_threshold="${CHUNK_SIZE_THRESHOLD}" \
   --aggregate_fn_name="${AGGREGATE_FN_NAME}" \
-  --raw_image_horizon="${RAW_IMAGE_HORIZON}"
+  --raw_image_horizon="${RAW_IMAGE_HORIZON}" \
+  --aggregate_fn="conservative"

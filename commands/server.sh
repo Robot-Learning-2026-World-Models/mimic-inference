@@ -13,7 +13,7 @@ export VIDEO_MODEL_PATH="${VIDEO_MODEL_PATH:-${REPO_ROOT}/checkpoints/rev3/iter_
 export ACTION_MODEL_PATH="${ACTION_MODEL_PATH:-${REPO_ROOT}/checkpoints/rev3/iter_000001200.pt}"
 export STATS_PATH="${STATS_PATH:-${REPO_ROOT}/checkpoints/rev3/dataset_stats.json}"
 
-export MIMIC_VIDEO_TASK="${MIMIC_VIDEO_TASK:-task2}"
+export MIMIC_VIDEO_TASK="${MIMIC_VIDEO_TASK:-task3}"
 if [[ -z "${MIMIC_VIDEO_PROMPT_EMBEDDING_PATH:-}" ]]; then
   case "${MIMIC_VIDEO_TASK,,}" in
     task1|task-1|task_1)

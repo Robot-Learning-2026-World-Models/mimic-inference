@@ -52,22 +52,7 @@ mimic-video/model/.venv/bin/hf download "$MIMIC_VIDEO_HF_REPO_ID" \
 Terminal A:
 
 ```bash
-export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
-export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
-export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
-
-export TRAINING_CONFIG="$PWD/mimic-video/configs/so101/idm_train_dual_task_low_rank.yaml"
-export VIDEO_MODEL_PATH="$PWD/checkpoints/iter_000002800_fused.pt"
-export ACTION_MODEL_PATH="$PWD/checkpoints/iter_000001850.pt"
-export STATS_PATH="$PWD/checkpoints/dataset_statistics/so101_task1_2_stats.json"
-export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
-export MIMIC_VIDEO_TASK=task1
-export PREPULL=0
-export HOST=127.0.0.1
-export PORT=8080
-export FPS=30
-
-commands/lerobot_async_policy_server.sh
+commands/server.sh
 ```
 
 ## Smoke client
@@ -75,26 +60,30 @@ commands/lerobot_async_policy_server.sh
 Terminal B, no robot required:
 
 ```bash
-export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
-export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
-export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
-
-python scripts/smoke_mimic_video_grpc_client.py \
-  --server-address 127.0.0.1:8080 \
-  --raw-image-horizon 13 \
-  --actions-per-chunk 3 \
-  --timeout 600
+commands/smoke_client.sh
 ```
 
-## Robot client
+## Sync debug robot client
 
-Terminal B, when ready to run the SO101:
+Terminal B, when ready to run the SO101. This is the recommended debug path:
+it warms a fresh 13-frame camera window at 30 Hz, sends one observation, waits
+while the server fully denoises and previews the 41-frame plan, then executes
+the returned 60-action chunk at 30 Hz.
 
 ```bash
-export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
-export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
-export ROBOT_PORT=/dev/ttyACM0
-export SERVER_ADDRESS=127.0.0.1:8080
+commands/client.sh
+```
 
+Debug artifacts are written per inference under `MIMIC_VIDEO_DEBUG_OUTPUT_DIR`
+on the server. The sync client also writes returned/applied action chunks under
+`SYNC_ACTION_LOG_DIR` (default `outputs/sync_client_actions`).
+
+## Async robot client
+
+The async launcher is still available for later smoother real-time experiments,
+but it is not the default debug path because the server-side preview pauses
+inference.
+
+```bash
 commands/lerobot_async_so101_client.sh
 ```

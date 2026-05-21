@@ -61,6 +61,7 @@ class MimicVideoPolicyServerConfig(PolicyServerConfig):
     use_cuda_graphs: bool = True
     seed: int = 0
     debug_save_denoised_video: bool = False
+    debug_preview_denoised_video: bool = False
     debug_output_dir: Path = Path("outputs")
     debug_run_name: str | None = None
     visualize_frames: bool = False
@@ -311,6 +312,7 @@ class MimicVideoPolicyServer(PolicyServer):
             use_cuda_graphs=self.config.use_cuda_graphs,
             seed=self.config.seed,
             debug_save_denoised_video=self.config.debug_save_denoised_video,
+            debug_preview_denoised_video=self.config.debug_preview_denoised_video,
             debug_output_dir=self.config.debug_output_dir,
             debug_run_name=self.config.debug_run_name,
         )

@@ -71,6 +71,13 @@ if [[ -n "${MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO:-}" ]]; then
     *) EXTRA_SERVER_ARGS+=(--debug_save_denoised_video="${MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO}") ;;
   esac
 fi
+if [[ -n "${MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO:-}" ]]; then
+  case "${MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO}" in
+    1|true|TRUE|yes|YES|on|ON) EXTRA_SERVER_ARGS+=(--debug_preview_denoised_video=true) ;;
+    0|false|FALSE|no|NO|off|OFF) EXTRA_SERVER_ARGS+=(--debug_preview_denoised_video=false) ;;
+    *) EXTRA_SERVER_ARGS+=(--debug_preview_denoised_video="${MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO}") ;;
+  esac
+fi
 if [[ -n "${MIMIC_VIDEO_DEBUG_OUTPUT_DIR:-}" ]]; then
   EXTRA_SERVER_ARGS+=(--debug_output_dir="${MIMIC_VIDEO_DEBUG_OUTPUT_DIR}")
 fi

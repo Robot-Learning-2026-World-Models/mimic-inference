@@ -1,3 +1,5 @@
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
 export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
 export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
@@ -6,15 +8,16 @@ export TRAINING_CONFIG="$PWD/mimic-video/configs/so101/idm_train_dual_task_low_r
 export VIDEO_MODEL_PATH="$PWD/checkpoints/iter_000002800_fused.pt"
 export ACTION_MODEL_PATH="$PWD/checkpoints/iter_000001850.pt"
 export STATS_PATH="$PWD/checkpoints/dataset_statistics/so101_task1_2_stats.json"
-export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
-export MIMIC_VIDEO_TASK=task1
+export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
 export PREPULL=0
 export HOST=127.0.0.1
 export PORT=8080
 export FPS=30
 
+
 OUTPUT_DEBUG=TRUE
 if [[ "${OUTPUT_DEBUG}" == "TRUE" ]]; then
+  rm -rf "$REPO_ROOT/outputs"
   export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO=1
   export MIMIC_VIDEO_DEBUG_OUTPUT_DIR="$PWD/outputs"
 else

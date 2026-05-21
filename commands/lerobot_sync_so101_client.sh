@@ -35,4 +35,5 @@ exec python -m lerobot_policy_mimic_video.grpc_robot_client \
   --raw_image_horizon="${RAW_IMAGE_HORIZON}" \
   --sync_num_cycles="${SYNC_NUM_CYCLES}" \
   --sync_log_actions="${SYNC_LOG_ACTIONS}" \
-  --sync_action_log_dir="${SYNC_ACTION_LOG_DIR}"
+  --sync_action_log_dir="${SYNC_ACTION_LOG_DIR}" \
+  --aggregate_fn_name="conservative"

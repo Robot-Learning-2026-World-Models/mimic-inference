@@ -50,15 +50,6 @@ case "${PROMPT_KEY}" in
     ;;
 esac
 
-OUTPUT_DEBUG=FALSE
-if [[ "${OUTPUT_DEBUG}" == "TRUE" ]]; then
-  # rm -rf "$REPO_ROOT/outputs"
-  export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO=1
-  export MIMIC_VIDEO_DEBUG_OUTPUT_DIR="$PWD/outputs"
-else
-  export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO=0
-fi
-
 FILTER_RECEIVER_LOG=TRUE
 if [[ "${FILTER_RECEIVER_LOG}" == "TRUE" ]]; then
   commands/lerobot_async_policy_server.sh 2>&1 | grep --line-buffered -v "Starting receiver"

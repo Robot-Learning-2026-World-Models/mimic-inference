@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 import pickle  # nosec
 import sys
-import time
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +21,6 @@ from cosmos_predict2.pipelines.video2world import Video2WorldPipeline
 from cosmos_predict2.pipelines.video2world2action import Video2World2ActionPipeline
 from cosmos_predict2.pipelines.world2action import World2ActionPipeline
 from imaginaire.utils.config_helper import override
-from imaginaire.utils.io import save_image_or_video
 
 from .configuration_mimic_video import MimicVideoPolicyConfig
 from .training_config import build_deployment_config, load_stats
@@ -90,15 +85,6 @@ class MimicVideoPolicy(PreTrainedPolicy):
 
         input_vid = torch.from_numpy(images[None]).cuda().to(dtype=torch.bfloat16)
         state_tensor = torch.from_numpy(lowdims[None]).cuda().to(dtype=torch.bfloat16)
-        debug_outputs_enabled = self.config.debug_save_denoised_video or self.config.debug_preview_denoised_video
-        debug_run_dir = self._make_debug_run_dir() if debug_outputs_enabled else None
-
-        def debug_preview_callback(
-            decoded_video: torch.Tensor,
-            _context: dict[str, torch.Tensor],
-        ) -> dict[str, Any]:
-            assert debug_run_dir is not None
-            return self._save_and_maybe_preview_debug_video(decoded_video=decoded_video, run_dir=debug_run_dir)
 
         with torch.no_grad():
             pipeline_result = self.pipeline(
@@ -110,29 +96,9 @@ class MimicVideoPolicy(PreTrainedPolicy):
                 stop_after_step=self.config.stop_video_denoising_step,
                 seed=self.config.seed,
                 use_cuda_graphs=self.config.use_cuda_graphs,
-                return_debug_outputs=debug_outputs_enabled,
-                debug_preview_callback=debug_preview_callback if debug_outputs_enabled else None,
             )
 
-        if debug_outputs_enabled:
-            assert debug_run_dir is not None
-            full_action_batch = pipeline_result["actions"].float()
-            actions = full_action_batch[0]
-            self._save_debug_outputs(
-                run_dir=debug_run_dir,
-                full_action_batch=full_action_batch,
-                returned_actions=actions[: self.config.horizon],
-                server_chunk_actions=actions[: self.config.n_action_steps],
-                prompt=prompt,
-                context_sigma=pipeline_result["context_sigma"],
-                context_step=pipeline_result["context_step"],
-                preview_result=pipeline_result["preview_result"],
-                action_decode_started_at=pipeline_result["action_decode_started_at"],
-                action_decode_finished_at=pipeline_result["action_decode_finished_at"],
-            )
-        else:
-            actions = pipeline_result[0].float()
-
+        actions = pipeline_result[0].float()
         actions = actions[: self.config.horizon].cpu()
         if actions.ndim != 2 or actions.shape[1] != self.config.action_dim:
             raise RuntimeError(f"Expected action chunk shape (H, {self.config.action_dim}), got {tuple(actions.shape)}.")
@@ -143,169 +109,6 @@ class MimicVideoPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         raise NotImplementedError("mimic_video is an inference-only policy.")
-
-    def _save_debug_outputs(
-        self,
-        *,
-        run_dir: Path,
-        full_action_batch: torch.Tensor,
-        returned_actions: torch.Tensor,
-        server_chunk_actions: torch.Tensor,
-        prompt: str,
-        context_sigma: torch.Tensor,
-        context_step: torch.Tensor,
-        preview_result: dict[str, Any] | None,
-        action_decode_started_at: float,
-        action_decode_finished_at: float,
-    ) -> None:
-        full_actions_np = full_action_batch.detach().float().cpu().numpy()
-        returned_actions_np = returned_actions.detach().float().cpu().numpy()
-        server_chunk_actions_np = server_chunk_actions.detach().float().cpu().numpy()
-        np.save(run_dir / "actions_full_batch.npy", full_actions_np)
-        np.save(run_dir / "actions_returned.npy", returned_actions_np)
-        np.save(run_dir / "actions_server_chunk.npy", server_chunk_actions_np)
-        np.save(run_dir / "actions_applied.npy", server_chunk_actions_np)
-
-        actions_json = {
-            "full_batch": full_actions_np.tolist(),
-            "returned": returned_actions_np.tolist(),
-            "server_chunk": server_chunk_actions_np.tolist(),
-            "applied": server_chunk_actions_np.tolist(),
-        }
-        with open(run_dir / "actions.json", "w", encoding="utf-8") as f:
-            json.dump(actions_json, f, indent=2)
-
-        sigma = context_sigma.detach().float().cpu()
-        preview_result = preview_result or {}
-        video_future_horizon_frames = max(0, self.config.video_pipe_state_t - 2) * 4
-        raw_image_horizon = 1 + (self.config.image_horizon - 1) * (
-            self.config.input_frequency // self.config.image_frequency
-        )
-        metadata = {
-            "prompt": prompt,
-            "seed": self.config.seed,
-            "num_sampling_steps": self.config.num_sampling_steps,
-            "stop_video_denoising_step": self.config.stop_video_denoising_step,
-            "xattn_layer_idx": self.config.xattn_layer_idx,
-            "context_step": int(context_step.detach().cpu().item()),
-            "context_sigma": sigma.tolist(),
-            "raw_image_horizon": raw_image_horizon,
-            "input_frequency": self.config.input_frequency,
-            "image_context_horizon": self.config.image_horizon,
-            "image_frequency": self.config.image_frequency,
-            "video_pipe_state_t": self.config.video_pipe_state_t,
-            "video_future_horizon_frames": video_future_horizon_frames,
-            "video_total_horizon_frames": self.config.image_horizon + video_future_horizon_frames,
-            "action_horizon": self.config.horizon,
-            "action_frequency": self.config.action_frequency,
-            "server_chunk_horizon": self.config.n_action_steps,
-            "action_shape_full_batch": list(full_actions_np.shape),
-            "action_shape_returned": list(returned_actions_np.shape),
-            "action_shape_server_chunk": list(server_chunk_actions_np.shape),
-            "action_shape_applied": list(server_chunk_actions_np.shape),
-            "applied_actions_source": "server_returned_chunk",
-            "debug_save_denoised_video": self.config.debug_save_denoised_video,
-            "debug_preview_denoised_video": self.config.debug_preview_denoised_video,
-            "preview": preview_result,
-            "action_decode_started_at": action_decode_started_at,
-            "action_decode_finished_at": action_decode_finished_at,
-            "action_decode_duration_s": action_decode_finished_at - action_decode_started_at,
-            "video_path": preview_result.get("video_path"),
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        with open(run_dir / "metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
-
-    def _save_and_maybe_preview_debug_video(self, *, decoded_video: torch.Tensor, run_dir: Path) -> dict[str, Any]:
-        video_path = run_dir / "denoised.mp4"
-        saved_at = time.time()
-        save_image_or_video(decoded_video, str(video_path), fps=self.config.image_frequency)
-        result: dict[str, Any] = {
-            "video_path": str(video_path),
-            "saved_at": saved_at,
-            "preview_shown": False,
-        }
-        if self.config.debug_preview_denoised_video:
-            result.update(self._preview_decoded_video_blocking(decoded_video=decoded_video, video_path=video_path))
-        return result
-
-    def _preview_decoded_video_blocking(self, *, decoded_video: torch.Tensor, video_path: Path) -> dict[str, Any]:
-        frames = self._decoded_video_to_uint8_frames(decoded_video)
-        if len(frames) == 0:
-            raise RuntimeError("Cannot preview denoised video because it has no frames.")
-
-        started_at = time.time()
-        try:
-            if sys.platform == "darwin":
-                import matplotlib
-
-                matplotlib.use("Qt5Agg")
-            import matplotlib.pyplot as plt
-        except Exception as exc:  # pragma: no cover - depends on local display stack
-            raise RuntimeError("debug_preview_denoised_video requires matplotlib and a display.") from exc
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        if fig.canvas.manager is not None:
-            fig.canvas.manager.set_window_title("mimic-video denoised plan")
-        ax.set_axis_off()
-        image = ax.imshow(frames[0])
-        ax.set_title(str(video_path))
-        frame_delay_s = 1.0 / max(1, self.config.image_frequency)
-        frame_idx = 0
-
-        try:
-            while plt.fignum_exists(fig.number):
-                image.set_data(frames[frame_idx % len(frames)])
-                fig.canvas.draw_idle()
-                plt.pause(frame_delay_s)
-                frame_idx += 1
-        finally:
-            if plt.fignum_exists(fig.number):
-                plt.close(fig)
-
-        closed_at = time.time()
-        return {
-            "preview_shown": True,
-            "preview_started_at": started_at,
-            "preview_closed_at": closed_at,
-            "preview_duration_s": closed_at - started_at,
-            "preview_frame_count": int(len(frames)),
-        }
-
-    @staticmethod
-    def _decoded_video_to_uint8_frames(decoded_video: torch.Tensor) -> np.ndarray:
-        tensor = decoded_video.detach().float().cpu()
-        if tensor.ndim == 5:
-            tensor = tensor[0]
-        if tensor.ndim != 4:
-            raise ValueError(
-                "Expected decoded video shape (C, T, H, W) or (B, C, T, H, W), "
-                f"got {tuple(tensor.shape)}."
-            )
-        if tensor.shape[0] == 1:
-            tensor = tensor.repeat(3, 1, 1, 1)
-        if tensor.shape[0] != 3:
-            raise ValueError(f"Expected decoded RGB video with 3 channels, got {tuple(tensor.shape)}.")
-        if torch.is_floating_point(tensor) and tensor.min() < -0.5:
-            tensor = (tensor + 1.0) / 2.0
-        tensor = tensor.clamp(0.0, 1.0)
-        frames = tensor.permute(1, 2, 3, 0).numpy()
-        return np.clip(frames * 255.0 + 0.5, 0, 255).astype(np.uint8)
-
-    def _make_debug_run_dir(self) -> Path:
-        output_dir = Path(self.config.debug_output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        if self.config.debug_run_name:
-            stem = self.config.debug_run_name
-        else:
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            stem = f"{timestamp}_pid{os.getpid()}_seed{self.config.seed}_step{self.config.stop_video_denoising_step}"
-
-        run_dir = output_dir / stem
-        if run_dir.exists():
-            run_dir = output_dir / f"{stem}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
-        run_dir.mkdir(parents=True, exist_ok=False)
-        return run_dir
 
     def _process_image(self, image: np.ndarray) -> np.ndarray:
         if self._frame_matches_target_resolution(image):

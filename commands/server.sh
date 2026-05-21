@@ -12,9 +12,28 @@ export TRAINING_CONFIG="${TRAINING_CONFIG:-${REPO_ROOT}/mimic-video/configs/so10
 export VIDEO_MODEL_PATH="${VIDEO_MODEL_PATH:-${REPO_ROOT}/checkpoints/iter_000002800_fused.pt}"
 export ACTION_MODEL_PATH="${ACTION_MODEL_PATH:-${REPO_ROOT}/checkpoints/iter_000001850.pt}"
 export STATS_PATH="${STATS_PATH:-${REPO_ROOT}/checkpoints/dataset_statistics/so101_task1_2_stats.json}"
-export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${MIMIC_VIDEO_PROMPT_EMBEDDING_PATH:-${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle}"
 
 export MIMIC_VIDEO_TASK="${MIMIC_VIDEO_TASK:-task1}"
+if [[ -z "${MIMIC_VIDEO_PROMPT_EMBEDDING_PATH:-}" ]]; then
+  case "${MIMIC_VIDEO_TASK,,}" in
+    task1|task-1|task_1)
+      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
+      ;;
+    task2|task-2|task_2)
+      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
+      ;;
+    task3|task-3|task_3)
+      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_colored_cube_towards_the_target_circle.pickle"
+      ;;
+    task4|task-4|task_4)
+      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_colored_cube_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
+      ;;
+    *)
+      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
+      ;;
+  esac
+fi
+export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH
 export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO="${MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO:-1}"
 export MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO="${MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO:-1}"
 export MIMIC_VIDEO_DEBUG_OUTPUT_DIR="${MIMIC_VIDEO_DEBUG_OUTPUT_DIR:-${REPO_ROOT}/outputs/debug_plans}"

@@ -81,6 +81,8 @@ def _select_prompt(default_prompt: str, *, task: str | None, prompt: str | None)
     task_prompts = {
         "task1": "the robot arm gently nudges the white object towards the target circle",
         "task2": "the robot arm gently nudges the white object towards the target circle while avoiding the red cylinder",
+        "task3": "the robot arm gently nudges the colored cube towards the target circle",
+        "task4": "the robot arm gently nudges the colored cube towards the target circle while avoiding the red cylinder",
     }
     if task:
         key = task.strip().lower().replace("-", "").replace("_", "")

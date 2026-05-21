@@ -55,6 +55,17 @@ Terminal A:
 commands/server.sh
 ```
 
+`commands/server.sh` defaults to `MIMIC_VIDEO_TASK=task1`. To switch the prompt
+and cached T5 latent together, set `MIMIC_VIDEO_TASK` to `task1`, `task2`,
+`task3`, or `task4`:
+
+```bash
+MIMIC_VIDEO_TASK=task4 commands/server.sh
+```
+
+Set `MIMIC_VIDEO_PROMPT_EMBEDDING_PATH` explicitly only when you want to override
+the task-selected cached latent.
+
 ## Smoke client
 
 Terminal B, no robot required:

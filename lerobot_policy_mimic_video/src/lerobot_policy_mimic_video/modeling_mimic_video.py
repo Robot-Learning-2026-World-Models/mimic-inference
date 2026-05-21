@@ -28,6 +28,9 @@ from .configuration_mimic_video import MimicVideoPolicyConfig
 from .training_config import build_deployment_config, load_stats
 
 
+FRAME_WINDOW_TIMESTAMPS_SUFFIX = "_frame_window_timestamps"
+CLIENT_OBSERVATION_ELAPSED_KEY = "client_observation_elapsed_s"
+
 
 class MimicVideoPolicy(PreTrainedPolicy):
     """LeRobot policy that runs mimic-video directly in the async PolicyServer."""
@@ -84,7 +87,8 @@ class MimicVideoPolicy(PreTrainedPolicy):
 
     def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         prompt = self.config.prompt
-        images, seed_frames = self._image_context_and_seed_frames_from_batch(batch)
+        images, seed_frames, seed_frame_timestamps = self._image_context_and_seed_frames_from_batch(batch)
+        client_observation_elapsed_s = self._client_observation_elapsed_from_batch(batch)
         lowdims = self._state_context_from_batch(batch)
 
         input_vid = torch.from_numpy(images[None]).cuda().to(dtype=torch.bfloat16)
@@ -112,6 +116,8 @@ class MimicVideoPolicy(PreTrainedPolicy):
                 returned_actions=actions[: self.config.horizon],
                 server_chunk_actions=actions[: self.config.n_action_steps],
                 seed_frames=seed_frames,
+                seed_frame_timestamps=seed_frame_timestamps,
+                client_observation_elapsed_s=client_observation_elapsed_s,
                 prompt=prompt,
                 context_sigma=pipeline_result["context_sigma"],
                 context_step=pipeline_result["context_step"],
@@ -138,11 +144,13 @@ class MimicVideoPolicy(PreTrainedPolicy):
         returned_actions: torch.Tensor,
         server_chunk_actions: torch.Tensor,
         seed_frames: list[np.ndarray],
+        seed_frame_timestamps: list[float] | None,
+        client_observation_elapsed_s: float | None,
         prompt: str,
         context_sigma: torch.Tensor,
         context_step: torch.Tensor,
     ) -> None:
-        run_dir = self._make_debug_run_dir()
+        run_dir, server_elapsed_s = self._make_debug_run_dir(client_observation_elapsed_s=client_observation_elapsed_s)
         video_denoiser_output = dict(video_denoiser_output)
         video_denoiser_output["video_model_path"] = str(self.config.video_model_path)
         video_denoiser_output["experiment_name"] = self.config.experiment_name
@@ -153,14 +161,17 @@ class MimicVideoPolicy(PreTrainedPolicy):
         seed_frame_dir = run_dir / "seed_frames"
         seed_frame_dir.mkdir(parents=True, exist_ok=False)
         for idx, frame in enumerate(seed_frames):
-            Image.fromarray(frame).save(seed_frame_dir / f"{idx}.png")
+            if seed_frame_timestamps is None:
+                filename = f"{idx}.png"
+            else:
+                filename = f"{idx}_{seed_frame_timestamps[idx]:.3f}s.png"
+            Image.fromarray(frame).save(seed_frame_dir / filename)
 
         full_actions_np = full_action_batch.detach().float().cpu().numpy()
         returned_actions_np = returned_actions.detach().float().cpu().numpy()
         server_chunk_actions_np = server_chunk_actions.detach().float().cpu().numpy()
 
         sigma = context_sigma.detach().float().cpu()
-        elapsed_s = self._debug_elapsed_s()
         actions_json = {
             "full_batch": full_actions_np.tolist(),
             "returned": returned_actions_np.tolist(),
@@ -172,25 +183,37 @@ class MimicVideoPolicy(PreTrainedPolicy):
             },
             "seed": self.config.seed,
             "prompt": prompt,
-            "elapsed_s": elapsed_s,
+            "elapsed_s": server_elapsed_s,
+            "server_elapsed_s": server_elapsed_s,
+            "client_observation_elapsed_s": client_observation_elapsed_s,
             "scheduler_step": int(video_denoiser_output.get("scheduler_step", 0)),
             "num_sampling_steps": self.config.num_sampling_steps,
             "context_step": int(context_step.detach().cpu().item()),
             "context_sigma": sigma.tolist(),
             "video_denoiser_output": "video_denoiser_output.pt",
-            "seed_frames": [f"seed_frames/{idx}.png" for idx in range(len(seed_frames))],
+            "seed_frames": [
+                f"seed_frames/{idx}.png"
+                if seed_frame_timestamps is None
+                else f"seed_frames/{idx}_{seed_frame_timestamps[idx]:.3f}s.png"
+                for idx in range(len(seed_frames))
+            ],
+            "seed_frame_client_elapsed_s": seed_frame_timestamps,
         }
         with open(run_dir / "actions.json", "w", encoding="utf-8") as f:
             json.dump(actions_json, f, indent=2)
 
-    def _make_debug_run_dir(self) -> Path:
+    def _make_debug_run_dir(self, *, client_observation_elapsed_s: float | None) -> tuple[Path, float]:
         run_root = self._get_debug_run_root()
         elapsed = self._debug_elapsed_s()
-        run_dir = run_root / f"{elapsed:.3f}s"
+        if client_observation_elapsed_s is None:
+            folder_name = f"server_{elapsed:.3f}s"
+        else:
+            folder_name = f"server_{elapsed:.3f}s_client_{client_observation_elapsed_s:.3f}s"
+        run_dir = run_root / folder_name
         if run_dir.exists():
-            run_dir = run_root / f"{elapsed:.3f}s_{time.time_ns()}"
+            run_dir = run_root / f"{folder_name}_{time.time_ns()}"
         run_dir.mkdir(parents=True, exist_ok=False)
-        return run_dir
+        return run_dir, elapsed
 
     def _get_debug_run_root(self) -> Path:
         if self._debug_run_root is not None:
@@ -240,15 +263,18 @@ class MimicVideoPolicy(PreTrainedPolicy):
         return np.clip((frame + 1.0) * 127.5, 0, 255).astype(np.uint8)
 
     def _image_context_from_batch(self, batch: dict[str, torch.Tensor]) -> np.ndarray:
-        images, _ = self._image_context_and_seed_frames_from_batch(batch)
+        images, _, _ = self._image_context_and_seed_frames_from_batch(batch)
         return images
 
-    def _image_context_and_seed_frames_from_batch(self, batch: dict[str, torch.Tensor]) -> tuple[np.ndarray, list[np.ndarray]]:
+    def _image_context_and_seed_frames_from_batch(
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[np.ndarray, list[np.ndarray], list[float] | None]:
         images = self._images_from_batch(batch)
-        selected = self._select_image_context_frames(images)
+        timestamps = self._frame_timestamps_from_batch(batch)
+        selected, selected_timestamps = self._select_image_context_frames_and_timestamps(images, timestamps)
         processed_tensors = [self._process_image(image) for image in selected]
         seed_frames = [self._processed_image_to_uint8_frame(frame) for frame in processed_tensors]
-        return np.concatenate(processed_tensors, axis=1), seed_frames
+        return np.concatenate(processed_tensors, axis=1), seed_frames, selected_timestamps
 
     @staticmethod
     def _processed_image_to_uint8_frame(processed: np.ndarray) -> np.ndarray:
@@ -263,6 +289,15 @@ class MimicVideoPolicy(PreTrainedPolicy):
         return images, processed, self._can_use_preprocessed_image_window(images)
 
     def _select_image_context_frames(self, images: list[np.ndarray]) -> list[np.ndarray]:
+        selected, _ = self._select_image_context_frames_and_timestamps(images, None)
+        return selected
+
+    def _select_image_context_frames_and_timestamps(
+        self, images: list[np.ndarray], timestamps: list[float] | None
+    ) -> tuple[list[np.ndarray], list[float] | None]:
+        if timestamps is not None and len(timestamps) != len(images):
+            timestamps = None
+
         if self._can_use_preprocessed_image_window(images):
             if not self._preprocessed_input_notice_printed:
                 print(
@@ -273,19 +308,41 @@ class MimicVideoPolicy(PreTrainedPolicy):
                     flush=True,
                 )
                 self._preprocessed_input_notice_printed = True
-            return images
+            return images, timestamps
 
         step = self.config.input_frequency // self.config.image_frequency
         raw_horizon = 1 + (self.config.image_horizon - 1) * step
         if len(images) < raw_horizon:
+            if timestamps is not None:
+                timestamps = [timestamps[0] for _ in range(raw_horizon - len(images))] + timestamps
             images = [images[0].copy() for _ in range(raw_horizon - len(images))] + images
         selected = images[-raw_horizon::step]
+        selected_timestamps = timestamps[-raw_horizon::step] if timestamps is not None else None
         if len(selected) != self.config.image_horizon:
             raise RuntimeError(
                 f"Expected {self.config.image_horizon} selected image frames, got {len(selected)} "
                 f"from raw_horizon={raw_horizon}, step={step}."
             )
-        return selected
+        return selected, selected_timestamps
+
+    def _frame_timestamps_from_batch(self, batch: dict[str, torch.Tensor]) -> list[float] | None:
+        key = f"{self.config.camera_key}{FRAME_WINDOW_TIMESTAMPS_SUFFIX}"
+        if key not in batch:
+            return None
+        timestamps = batch[key]
+        if isinstance(timestamps, torch.Tensor):
+            timestamps = timestamps.detach().cpu().numpy()
+        arr = np.asarray(timestamps, dtype=np.float64).reshape(-1)
+        return arr.tolist()
+
+    @staticmethod
+    def _client_observation_elapsed_from_batch(batch: dict[str, torch.Tensor]) -> float | None:
+        if CLIENT_OBSERVATION_ELAPSED_KEY not in batch:
+            return None
+        value = batch[CLIENT_OBSERVATION_ELAPSED_KEY]
+        if isinstance(value, torch.Tensor):
+            value = value.detach().cpu().item()
+        return float(value)
 
     def _can_use_preprocessed_image_window(self, images: list[np.ndarray]) -> bool:
         return len(images) == self.config.image_horizon and all(self._frame_matches_target_resolution(image) for image in images)

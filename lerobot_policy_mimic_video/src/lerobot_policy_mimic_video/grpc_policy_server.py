@@ -31,6 +31,8 @@ except ImportError:
 
 
 FRAME_WINDOW_SUFFIX = "_frame_window"
+FRAME_WINDOW_TIMESTAMPS_SUFFIX = "_frame_window_timestamps"
+CLIENT_OBSERVATION_ELAPSED_KEY = "client_observation_elapsed_s"
 RAW_STATE_KEY = "observation.state"
 
 
@@ -350,8 +352,13 @@ class MimicVideoPolicyServer(PolicyServer):
 
         camera_key = self.policy.config.camera_key
         window_key = f"{_raw_camera_key(camera_key)}{FRAME_WINDOW_SUFFIX}"
+        window_timestamps_key = f"{_raw_camera_key(camera_key)}{FRAME_WINDOW_TIMESTAMPS_SUFFIX}"
         if window_key in raw_observation:
             observation[camera_key] = torch.as_tensor(raw_observation[window_key])
+            if window_timestamps_key in raw_observation:
+                observation[f"{camera_key}{FRAME_WINDOW_TIMESTAMPS_SUFFIX}"] = torch.as_tensor(
+                    raw_observation[window_timestamps_key]
+                )
         elif camera_key in observation:
             observation[camera_key] = torch.as_tensor(observation[camera_key])
         else:
@@ -362,6 +369,8 @@ class MimicVideoPolicyServer(PolicyServer):
 
         if "task" in raw_observation:
             observation["task"] = raw_observation["task"]
+        if CLIENT_OBSERVATION_ELAPSED_KEY in raw_observation:
+            observation[CLIENT_OBSERVATION_ELAPSED_KEY] = torch.as_tensor(raw_observation[CLIENT_OBSERVATION_ELAPSED_KEY])
         self.last_processed_obs = observation_t
         prepare_time = time.perf_counter() - start_prepare
 

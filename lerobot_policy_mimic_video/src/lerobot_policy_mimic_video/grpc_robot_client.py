@@ -100,6 +100,8 @@ def async_client(cfg: MimicVideoRobotClientConfig):
         action_receiver_thread.start()
         try:
             client.control_loop(task=cfg.task)
+        except Exception as e:
+            print(e)
         finally:
             client.stop()
             action_receiver_thread.join()

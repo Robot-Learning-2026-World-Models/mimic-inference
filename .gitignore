@@ -2,3 +2,5 @@ checkpoints
 hf-cache
 .env
 *.pyc
+
+logs

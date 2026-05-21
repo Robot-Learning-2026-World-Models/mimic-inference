@@ -70,14 +70,31 @@ def load_training_yaml(path: Path) -> dict[str, Any]:
     return _require_mapping(data, str(path))
 
 
-def _repo_root_from_training_config(training_config: Path) -> Path:
+def _repo_root_candidates(training_config: Path) -> list[Path]:
     config_path = training_config.expanduser().resolve()
-    for parent in [config_path.parent, *config_path.parents]:
+    candidates: list[Path] = [config_path.parent, *config_path.parents]
+
+    env_root = os.environ.get("MIMIC_VIDEO_REPO_ROOT")
+    if env_root:
+        env_path = Path(env_root).expanduser().resolve()
+        candidates.extend([env_path, env_path / "mimic-video"])
+
+    cwd = Path.cwd().resolve()
+    candidates.extend([cwd, cwd / "mimic-video", *cwd.parents])
+
+    module_path = Path(__file__).resolve()
+    candidates.extend([module_path.parent, *module_path.parents])
+    return candidates
+
+
+def _repo_root_from_training_config(training_config: Path) -> Path:
+    for parent in _repo_root_candidates(training_config):
         if (parent / "model/cosmos_predict2/configs/dataloading/policy_io").is_dir():
             return parent
     raise FileNotFoundError(
-        f"Could not locate mimic-video repo root from training_config={config_path}; "
-        "expected model/cosmos_predict2/configs/dataloading/policy_io under an ancestor."
+        f"Could not locate mimic-video repo root for training_config={training_config.expanduser().resolve()}; "
+        "expected model/cosmos_predict2/configs/dataloading/policy_io under the config path, "
+        "MIMIC_VIDEO_REPO_ROOT, current working tree, or installed package ancestors."
     )
 
 

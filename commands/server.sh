@@ -1,46 +1,67 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
 
-export PATH="${REPO_ROOT}/mimic-video/model/.venv/bin:${PATH}"
-export PYTHONPATH="${REPO_ROOT}/lerobot_policy_mimic_video/src:${REPO_ROOT}/mimic-video/model"
-export COSMOS_PREDICT2_ARGS="--checkpoints ${REPO_ROOT}/checkpoints"
+export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
+export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
+export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
 
-export TRAINING_CONFIG="${TRAINING_CONFIG:-${REPO_ROOT}/mimic-video/configs/so101/idm_large_all_tasks_dirty_4500.yaml}"
-export VIDEO_MODEL_PATH="${VIDEO_MODEL_PATH:-${REPO_ROOT}/checkpoints/rev3/iter_000004500_fused.pt}"
-export ACTION_MODEL_PATH="${ACTION_MODEL_PATH:-${REPO_ROOT}/checkpoints/rev3/iter_000001200.pt}"
-export STATS_PATH="${STATS_PATH:-${REPO_ROOT}/checkpoints/rev3/dataset_stats.json}"
+export TRAINING_CONFIG="/media/baraq/Transfer/idm_long_700_config.yaml"
+export VIDEO_MODEL_PATH="/media/baraq/Transfer/idm_long_700_backbone.pt"
+export ACTION_MODEL_PATH="/media/baraq/Transfer/idm_long_700.pt"
+export STATS_PATH="/media/baraq/Transfer/idm_long_700_stats.json"
+export PROMPT="${PROMPT:-task2}"
+export PREPULL=0
+export HOST=127.0.0.1
+export PORT=8080
+export FPS=30
 
-export MIMIC_VIDEO_TASK="${MIMIC_VIDEO_TASK:-task3}"
-if [[ -z "${MIMIC_VIDEO_PROMPT_EMBEDDING_PATH:-}" ]]; then
-  case "${MIMIC_VIDEO_TASK,,}" in
-    task1|task-1|task_1)
-      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
-      ;;
-    task2|task-2|task_2)
-      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
-      ;;
-    task3|task-3|task_3)
-      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_colored_cube_towards_the_target_circle.pickle"
-      ;;
-    task4|task-4|task_4)
-      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_colored_cube_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
-      ;;
-    *)
-      MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="${REPO_ROOT}/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
-      ;;
-  esac
+PROMPT_KEY="${PROMPT,,}"
+PROMPT_KEY="${PROMPT_KEY// /}"
+PROMPT_KEY="${PROMPT_KEY//-/}"
+PROMPT_KEY="${PROMPT_KEY//_/}"
+case "${PROMPT_KEY}" in
+  1|task1)
+    export MIMIC_VIDEO_TASK=task1
+    export MIMIC_VIDEO_PROMPT="the robot arm gently nudges the white object towards the target circle"
+    export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
+    ;;
+  2|task2)
+    export MIMIC_VIDEO_TASK=task2
+    export MIMIC_VIDEO_PROMPT="the robot arm gently nudges the white object towards the target circle while avoiding the red cylinder"
+    export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
+    ;;
+  3|task3)
+    export MIMIC_VIDEO_TASK=task3
+    export MIMIC_VIDEO_PROMPT="the robot arm gently nudges the colored cube towards the target circle"
+    export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_colored_cube_towards_the_target_circle.pickle"
+    ;;
+  4|task4)
+    export MIMIC_VIDEO_TASK=task4
+    export MIMIC_VIDEO_PROMPT="the robot arm gently nudges the colored cube towards the target circle while avoiding the red cylinder"
+    export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_colored_cube_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
+    ;;
+  *)
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!!! WARNING: PROMPT DID NOT RESOLVE TO TASK1/TASK2/TASK3/TASK4 !!!"
+    echo "!!! USING RAW PROMPT: ${PROMPT}"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    export MIMIC_VIDEO_PROMPT="${PROMPT}"
+    ;;
+esac
+
+OUTPUT_DEBUG=FALSE
+if [[ "${OUTPUT_DEBUG}" == "TRUE" ]]; then
+  # rm -rf "$REPO_ROOT/outputs"
+  export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO=1
+  export MIMIC_VIDEO_DEBUG_OUTPUT_DIR="$PWD/outputs"
+else
+  export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO=0
 fi
-export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH
-export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO="${MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO:-1}"
-export MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO="${MIMIC_VIDEO_DEBUG_PREVIEW_DENOISED_VIDEO:-1}"
-export MIMIC_VIDEO_DEBUG_OUTPUT_DIR="${MIMIC_VIDEO_DEBUG_OUTPUT_DIR:-${REPO_ROOT}/outputs/debug_plans}"
 
-export PREPULL="${PREPULL:-0}"
-export HOST="${HOST:-127.0.0.1}"
-export PORT="${PORT:-8080}"
-export FPS="${FPS:-30}"
-
-exec commands/lerobot_async_policy_server.sh
+FILTER_RECEIVER_LOG=TRUE
+if [[ "${FILTER_RECEIVER_LOG}" == "TRUE" ]]; then
+  commands/lerobot_async_policy_server.sh 2>&1 | grep --line-buffered -v "Starting receiver"
+else
+  commands/lerobot_async_policy_server.sh
+fi

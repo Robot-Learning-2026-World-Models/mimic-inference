@@ -51,7 +51,7 @@ class MimicVideoPolicyConfig(PreTrainedConfig):
     max_horizon: int = 61
     video_pipe_state_t: int = 11
     xattn_layer_idx: int = 20
-    action_denoising_steps: int = 10
+    action_denoising_steps: int = 35
     use_cuda_graphs: bool = True
     seed: int = 0
     debug_save_denoised_video: bool = False

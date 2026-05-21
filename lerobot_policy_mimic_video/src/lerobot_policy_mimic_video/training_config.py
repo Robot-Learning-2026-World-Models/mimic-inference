@@ -88,6 +88,11 @@ def _repo_root_candidates(training_config: Path) -> list[Path]:
 
 
 def _repo_root_from_training_config(training_config: Path) -> Path:
+    env_root = os.environ.get("MIMIC_VIDEO_REPO_ROOT")
+    if env_root:
+        root = Path(env_root).expanduser().resolve()
+        if (root / "model/cosmos_predict2/configs/dataloading/policy_io").is_dir():
+            return root
     for parent in _repo_root_candidates(training_config):
         if (parent / "model/cosmos_predict2/configs/dataloading/policy_io").is_dir():
             return parent

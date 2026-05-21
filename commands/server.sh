@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="/home/team06/mimic-inference"
+cd "${REPO_ROOT}"
 
 export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
 export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
 export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
 
-export TRAINING_CONFIG="/media/baraq/Transfer/idm_long_700_config.yaml"
-export VIDEO_MODEL_PATH="/media/baraq/Transfer/idm_long_700_backbone.pt"
-export ACTION_MODEL_PATH="/media/baraq/Transfer/idm_long_700.pt"
-export STATS_PATH="/media/baraq/Transfer/idm_long_700_stats.json"
-export PROMPT="${PROMPT:-task2}"
-export PREPULL=0
-export HOST=127.0.0.1
-export PORT=8080
-export FPS=30
+export MIMIC_VIDEO_REPO_ROOT="${REPO_ROOT}/mimic-video"
+export TRAINING_CONFIG="/media/team06/Transfer/idm_long_700_config.yaml"
+export VIDEO_MODEL_PATH="/media/team06/Transfer/idm_long_700_backbone.pt"
+export ACTION_MODEL_PATH="/media/team06/Transfer/idm_long_700.pt"
+export STATS_PATH="/media/team06/Transfer/idm_long_700_stats.json"
 
 PROMPT_KEY="${PROMPT,,}"
 PROMPT_KEY="${PROMPT_KEY// /}"

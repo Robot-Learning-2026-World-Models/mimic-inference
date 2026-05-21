@@ -57,6 +57,9 @@ class MimicVideoPolicyServerConfig(PolicyServerConfig):
     stop_video_denoising_step: int = 0
     use_cuda_graphs: bool = True
     seed: int = 0
+    debug_save_denoised_video: bool = False
+    debug_output_dir: Path = Path("outputs")
+    debug_run_name: str | None = None
 
 
 def _raw_camera_key(policy_camera_key: str) -> str:
@@ -177,6 +180,9 @@ class MimicVideoPolicyServer(PolicyServer):
             stop_video_denoising_step=self.config.stop_video_denoising_step,
             use_cuda_graphs=self.config.use_cuda_graphs,
             seed=self.config.seed,
+            debug_save_denoised_video=self.config.debug_save_denoised_video,
+            debug_output_dir=self.config.debug_output_dir,
+            debug_run_name=self.config.debug_run_name,
         )
         policy_config.prompt = _select_prompt(
             policy_config.prompt,

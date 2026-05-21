@@ -4,3 +4,5 @@ hf-cache
 *.pyc
 
 logs
+
+outputs

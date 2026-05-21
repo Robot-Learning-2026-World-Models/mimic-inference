@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import pickle  # nosec
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -19,6 +24,7 @@ from cosmos_predict2.pipelines.video2world import Video2WorldPipeline
 from cosmos_predict2.pipelines.video2world2action import Video2World2ActionPipeline
 from cosmos_predict2.pipelines.world2action import World2ActionPipeline
 from imaginaire.utils.config_helper import override
+from imaginaire.utils.io import save_image_or_video
 
 from .configuration_mimic_video import MimicVideoPolicyConfig
 from .training_config import build_deployment_config, load_stats
@@ -84,7 +90,7 @@ class MimicVideoPolicy(PreTrainedPolicy):
         state_tensor = torch.from_numpy(lowdims[None]).cuda().to(dtype=torch.bfloat16)
 
         with torch.no_grad():
-            actions = self.pipeline(
+            pipeline_result = self.pipeline(
                 input_vid=input_vid,
                 state_B_HO_O=state_tensor,
                 prompt=prompt,
@@ -93,7 +99,23 @@ class MimicVideoPolicy(PreTrainedPolicy):
                 stop_after_step=self.config.stop_video_denoising_step,
                 seed=self.config.seed,
                 use_cuda_graphs=self.config.use_cuda_graphs,
-            )[0].float()
+                return_debug_outputs=self.config.debug_save_denoised_video,
+            )
+
+        if self.config.debug_save_denoised_video:
+            full_action_batch = pipeline_result["actions"].float()
+            actions = full_action_batch[0]
+            self._save_debug_outputs(
+                decoded_video=pipeline_result["decoded_video"],
+                full_action_batch=full_action_batch,
+                returned_actions=actions[: self.config.horizon],
+                server_chunk_actions=actions[: self.config.n_action_steps],
+                prompt=prompt,
+                context_sigma=pipeline_result["context_sigma"],
+                context_step=pipeline_result["context_step"],
+            )
+        else:
+            actions = pipeline_result[0].float()
 
         actions = actions[: self.config.horizon].cpu()
         if actions.ndim != 2 or actions.shape[1] != self.config.action_dim:
@@ -105,6 +127,68 @@ class MimicVideoPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         raise NotImplementedError("mimic_video is an inference-only policy.")
+
+    def _save_debug_outputs(
+        self,
+        *,
+        decoded_video: torch.Tensor,
+        full_action_batch: torch.Tensor,
+        returned_actions: torch.Tensor,
+        server_chunk_actions: torch.Tensor,
+        prompt: str,
+        context_sigma: torch.Tensor,
+        context_step: torch.Tensor,
+    ) -> None:
+        run_dir = self._make_debug_run_dir()
+        video_path = run_dir / "denoised.mp4"
+        save_image_or_video(decoded_video, str(video_path), fps=self.config.image_frequency)
+
+        full_actions_np = full_action_batch.detach().float().cpu().numpy()
+        returned_actions_np = returned_actions.detach().float().cpu().numpy()
+        server_chunk_actions_np = server_chunk_actions.detach().float().cpu().numpy()
+        np.save(run_dir / "actions_full_batch.npy", full_actions_np)
+        np.save(run_dir / "actions_returned.npy", returned_actions_np)
+        np.save(run_dir / "actions_server_chunk.npy", server_chunk_actions_np)
+
+        actions_json = {
+            "full_batch": full_actions_np.tolist(),
+            "returned": returned_actions_np.tolist(),
+            "server_chunk": server_chunk_actions_np.tolist(),
+        }
+        with open(run_dir / "actions.json", "w", encoding="utf-8") as f:
+            json.dump(actions_json, f, indent=2)
+
+        sigma = context_sigma.detach().float().cpu()
+        metadata = {
+            "prompt": prompt,
+            "seed": self.config.seed,
+            "num_sampling_steps": self.config.num_sampling_steps,
+            "stop_video_denoising_step": self.config.stop_video_denoising_step,
+            "context_step": int(context_step.detach().cpu().item()),
+            "context_sigma": sigma.tolist(),
+            "action_shape_full_batch": list(full_actions_np.shape),
+            "action_shape_returned": list(returned_actions_np.shape),
+            "action_shape_server_chunk": list(server_chunk_actions_np.shape),
+            "video_path": str(video_path),
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        with open(run_dir / "metadata.json", "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+    def _make_debug_run_dir(self) -> Path:
+        output_dir = Path(self.config.debug_output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        if self.config.debug_run_name:
+            stem = self.config.debug_run_name
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            stem = f"{timestamp}_pid{os.getpid()}_seed{self.config.seed}_step{self.config.stop_video_denoising_step}"
+
+        run_dir = output_dir / stem
+        if run_dir.exists():
+            run_dir = output_dir / f"{stem}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        return run_dir
 
     def _process_image(self, image: np.ndarray) -> np.ndarray:
         pil_image = Image.fromarray(image.astype(np.uint8), "RGB")

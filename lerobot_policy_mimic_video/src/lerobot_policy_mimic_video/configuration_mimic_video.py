@@ -54,6 +54,9 @@ class MimicVideoPolicyConfig(PreTrainedConfig):
     action_denoising_steps: int = 10
     use_cuda_graphs: bool = True
     seed: int = 0
+    debug_save_denoised_video: bool = False
+    debug_output_dir: Path = Path("outputs")
+    debug_run_name: str | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()

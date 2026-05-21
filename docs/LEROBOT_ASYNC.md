@@ -87,7 +87,21 @@ Prompt selection is server-side. Set `MIMIC_VIDEO_TASK=task1` or `MIMIC_VIDEO_TA
 - `preprocessing.image.crop_xywh` and `preprocessing.image.output_size_hw` for crop/resize.
 - `training.action_decoder.experiment`, if present, to choose the Cosmos action experiment name.
 - `training.action_decoder.model`, `network`, and `action_scheduler`, if present, for action-decoder parameters.
-- `model/cosmos_predict2/configs/dataloading/policy_io/so101.yaml` beside the YAML checkout for image, state, and action horizons.
+- `model/cosmos_predict2/configs/dataloading/policy_io/<experiment>.yaml` for image, state, and action horizons. The loader first checks beside the YAML checkout, then `MIMIC_VIDEO_REPO_ROOT`, the current working tree, and the installed package location, so exported YAMLs outside the repo can still use repo-local policy IO files.
+
+For the `/Volumes/Transfer/idm_long_700*` checkpoint set:
+
+```bash
+TRAINING_CONFIG=/Volumes/Transfer/idm_long_700_config.yaml
+VIDEO_MODEL_PATH=/Volumes/Transfer/idm_long_700_backbone.pt
+ACTION_MODEL_PATH=/Volumes/Transfer/idm_long_700.pt
+STATS_PATH=/Volumes/Transfer/idm_long_700_stats.json
+PREPULL=0
+```
+
+That config routes through `policy_io/so101_90.yaml`: 5 image observation
+frames at 10 Hz, 56 future video frames, `video_pipe_state_t=16`, 90 lowdim
+actions at 30 Hz, `max_horizon=91`, and `xattn_layer_idx=16`.
 
 The current intended config is:
 

@@ -70,6 +70,32 @@ export FPS=30
 commands/lerobot_async_policy_server.sh
 ```
 
+### Long-context IDM from `/Volumes/Transfer`
+
+The `idm_long_700*` artifacts use `experiment: so101_90`, so deployment derives
+`state_t=16`, 5 visual observation frames, 56 future video frames, a 90-action
+decoder horizon, `max_horizon=91`, and `xattn_layer_idx=16` from the exported
+YAML.
+
+```bash
+export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
+export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
+export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
+
+export TRAINING_CONFIG="/Volumes/Transfer/idm_long_700_config.yaml"
+export VIDEO_MODEL_PATH="/Volumes/Transfer/idm_long_700_backbone.pt"
+export ACTION_MODEL_PATH="/Volumes/Transfer/idm_long_700.pt"
+export STATS_PATH="/Volumes/Transfer/idm_long_700_stats.json"
+export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
+export MIMIC_VIDEO_TASK=task1
+export PREPULL=0
+export HOST=127.0.0.1
+export PORT=8080
+export FPS=30
+
+commands/lerobot_async_policy_server.sh
+```
+
 ## Smoke client
 
 Terminal B, no robot required:

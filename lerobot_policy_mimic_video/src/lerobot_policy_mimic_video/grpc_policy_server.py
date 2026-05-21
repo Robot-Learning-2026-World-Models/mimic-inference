@@ -61,7 +61,7 @@ class MimicVideoPolicyServerConfig(PolicyServerConfig):
     use_cuda_graphs: bool = True
     seed: int = 0
     debug_save_denoised_video: bool = False
-    debug_output_dir: Path = Path("outputs")
+    debug_output_dir: Path = Path("runs")
     debug_run_name: str | None = None
     visualize_frames: bool = False
     visualize_every_n: int = 1

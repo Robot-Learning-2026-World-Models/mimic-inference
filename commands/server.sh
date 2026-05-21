@@ -15,7 +15,7 @@ export PORT=8080
 export FPS=30
 
 
-OUTPUT_DEBUG=FALSE
+OUTPUT_DEBUG=TRUE
 if [[ "${OUTPUT_DEBUG}" == "TRUE" ]]; then
   rm -rf "$REPO_ROOT/outputs"
   export MIMIC_VIDEO_DEBUG_SAVE_DENOISED_VIDEO=1

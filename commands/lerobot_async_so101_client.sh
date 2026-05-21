@@ -11,9 +11,9 @@ CAMERA_WIDTH="${CAMERA_WIDTH:-640}"
 CAMERA_HEIGHT="${CAMERA_HEIGHT:-480}"
 CAMERA_FPS="${CAMERA_FPS:-30}"
 RAW_IMAGE_HORIZON="${RAW_IMAGE_HORIZON:-13}"
-PROMPT="${MIMIC_VIDEO_PROMPT:-the robot arm pushes the white object towards the goal circle}"
-ACTIONS_PER_CHUNK="${ACTIONS_PER_CHUNK:-30}"
-CHUNK_SIZE_THRESHOLD="${CHUNK_SIZE_THRESHOLD:-0.5}"
+PROMPT="${MIMIC_VIDEO_PROMPT:-the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder}"
+ACTIONS_PER_CHUNK="${ACTIONS_PER_CHUNK:-60}"
+CHUNK_SIZE_THRESHOLD="${CHUNK_SIZE_THRESHOLD:-0.8}"
 AGGREGATE_FN_NAME="${AGGREGATE_FN_NAME:-latest_only}"
 POLICY_DEVICE="${POLICY_DEVICE:-cuda}"
 
@@ -32,4 +32,5 @@ exec python -m lerobot_policy_mimic_video.grpc_robot_client \
   --actions_per_chunk="${ACTIONS_PER_CHUNK}" \
   --chunk_size_threshold="${CHUNK_SIZE_THRESHOLD}" \
   --aggregate_fn_name="${AGGREGATE_FN_NAME}" \
-  --raw_image_horizon="${RAW_IMAGE_HORIZON}"
+  --raw_image_horizon="${RAW_IMAGE_HORIZON}" \
+  --aggregate_fn="conservative"

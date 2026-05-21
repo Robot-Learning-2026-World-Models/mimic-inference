@@ -4,11 +4,11 @@ export PATH="$PWD/mimic-video/model/.venv/bin:$PATH"
 export PYTHONPATH="$PWD/lerobot_policy_mimic_video/src:$PWD/mimic-video/model"
 export COSMOS_PREDICT2_ARGS="--checkpoints $PWD/checkpoints"
 
-export TRAINING_CONFIG="$PWD/mimic-video/configs/so101/idm_large_all_tasks.yaml"
+export TRAINING_CONFIG="$PWD/mimic-video/configs/so101/idm_large_all_tasks_dirty_4500.yaml"
 export VIDEO_MODEL_PATH="$PWD/checkpoints/rev3/iter_000004500_fused.pt"
 export ACTION_MODEL_PATH="$PWD/checkpoints/rev3/iter_000001200.pt"
 export STATS_PATH="$PWD/checkpoints/rev3/dataset_stats.json"
-export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle.pickle"
+export MIMIC_VIDEO_PROMPT_EMBEDDING_PATH="$PWD/inference_t5_embeddings/the_robot_arm_gently_nudges_the_white_object_towards_the_target_circle_while_avoiding_the_red_cylinder.pickle"
 export PREPULL=0
 export HOST=127.0.0.1
 export PORT=8080

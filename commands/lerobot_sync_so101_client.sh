@@ -17,6 +17,7 @@ POLICY_DEVICE="${POLICY_DEVICE:-cuda}"
 SYNC_NUM_CYCLES="${SYNC_NUM_CYCLES:-0}"
 SYNC_LOG_ACTIONS="${SYNC_LOG_ACTIONS:-true}"
 SYNC_ACTION_LOG_DIR="${SYNC_ACTION_LOG_DIR:-outputs/sync_client_actions}"
+SYNC_EWA_ALPHA="${SYNC_EWA_ALPHA:-1.0}"
 
 export PYTHONPATH="${PWD}/lerobot_policy_mimic_video/src:${PYTHONPATH:-}"
 
@@ -36,4 +37,5 @@ exec python -m lerobot_policy_mimic_video.grpc_robot_client \
   --sync_num_cycles="${SYNC_NUM_CYCLES}" \
   --sync_log_actions="${SYNC_LOG_ACTIONS}" \
   --sync_action_log_dir="${SYNC_ACTION_LOG_DIR}" \
+  --sync_ewa_alpha="${SYNC_EWA_ALPHA}" \
   --aggregate_fn="conservative"

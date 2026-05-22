@@ -303,6 +303,7 @@ class MimicVideoPolicyServer(PolicyServer):
             hf_stats_filename=self.config.hf_stats_filename,
             hf_stats_revision=self.config.hf_stats_revision,
             training_config=self.config.training_config,
+            horizon=deployment.action_horizon,
             n_action_steps=policy_specs.actions_per_chunk,
             input_frequency=self.config.fps,
             num_sampling_steps=self.config.num_sampling_steps,

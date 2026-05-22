@@ -36,6 +36,7 @@ class MimicVideoRobotClientConfig(RobotClientConfig):
     sync_num_cycles: int = 0
     sync_log_actions: bool = True
     sync_action_log_dir: Path = Path("outputs/sync_client_actions")
+    sync_ewa_alpha: float = 1.0
 
 
 class MimicVideoRobotClient(RobotClient):
@@ -45,9 +46,12 @@ class MimicVideoRobotClient(RobotClient):
         super().__init__(config)
         if config.raw_image_horizon < 1:
             raise ValueError("raw_image_horizon must be >= 1.")
+        if not 0.0 < config.sync_ewa_alpha <= 1.0:
+            raise ValueError("sync_ewa_alpha must be in the range (0, 1].")
         self.frame_windows: dict[str, deque[np.ndarray]] = defaultdict(
             lambda: deque(maxlen=config.raw_image_horizon)
         )
+        self._sync_ewa_action: Any | None = None
 
     @staticmethod
     def _looks_like_image(value: Any) -> bool:
@@ -191,14 +195,15 @@ class MimicVideoRobotClient(RobotClient):
 
     def execute_action_chunk_sync(
         self, timed_actions: list[TimedAction], verbose: bool = False
-    ) -> tuple[list[Any], float]:
+    ) -> tuple[list[Any], list[Any], float]:
         performed_actions: list[Any] = []
+        applied_actions: list[Any] = []
         start_time = time.perf_counter()
         for timed_action in timed_actions:
             action_start = time.perf_counter()
-            performed_action = self.robot.send_action(
-                self._action_tensor_to_action_dict(timed_action.get_action())
-            )
+            applied_action = self._filter_sync_action(timed_action.get_action())
+            performed_action = self.robot.send_action(self._action_tensor_to_action_dict(applied_action))
+            applied_actions.append(applied_action)
             performed_actions.append(performed_action)
             with self.latest_action_lock:
                 self.latest_action = timed_action.get_timestep()
@@ -207,7 +212,26 @@ class MimicVideoRobotClient(RobotClient):
             if verbose:
                 self.logger.debug(f"Sync action #{timed_action.get_timestep()} performed in {elapsed * 1000:.2f}ms")
         execute_time = time.perf_counter() - start_time
-        return performed_actions, execute_time
+        return performed_actions, applied_actions, execute_time
+
+    def _filter_sync_action(self, action: Any) -> Any:
+        alpha = self.config.sync_ewa_alpha
+        if alpha >= 1.0:
+            return action
+        if self._sync_ewa_action is None:
+            self._sync_ewa_action = self._detach_action(action)
+            return action
+        filtered_action = alpha * action + (1.0 - alpha) * self._sync_ewa_action
+        self._sync_ewa_action = self._detach_action(filtered_action)
+        return filtered_action
+
+    @staticmethod
+    def _detach_action(action: Any) -> Any:
+        if hasattr(action, "detach"):
+            return action.detach().clone()
+        if isinstance(action, np.ndarray):
+            return action.copy()
+        return action
 
     def sync_control_loop(self, task: str, verbose: bool = False) -> None:
         cycle_idx = 0
@@ -224,13 +248,16 @@ class MimicVideoRobotClient(RobotClient):
                 self.logger.warning(
                     f"Expected {self.config.actions_per_chunk} sync actions, received {len(timed_actions)}."
                 )
-            performed_actions, execute_time = self.execute_action_chunk_sync(timed_actions, verbose=verbose)
+            performed_actions, applied_action_tensors, execute_time = self.execute_action_chunk_sync(
+                timed_actions, verbose=verbose
+            )
             if self.config.sync_log_actions:
                 self._log_sync_actions(
                     cycle_idx=cycle_idx,
                     timed_observation=timed_observation,
                     raw_observation=raw_observation,
                     timed_actions=timed_actions,
+                    applied_action_tensors=applied_action_tensors,
                     performed_actions=performed_actions,
                     warmup_time=warmup_time,
                     wait_time=wait_time,
@@ -248,6 +275,7 @@ class MimicVideoRobotClient(RobotClient):
         timed_observation: TimedObservation,
         raw_observation: RawObservation,
         timed_actions: list[TimedAction],
+        applied_action_tensors: list[Any],
         performed_actions: list[Any],
         warmup_time: float,
         wait_time: float,
@@ -263,8 +291,9 @@ class MimicVideoRobotClient(RobotClient):
 
         action_tensors = [action.get_action().detach().float().cpu().numpy() for action in timed_actions]
         actions_np = np.stack(action_tensors, axis=0) if action_tensors else np.empty((0,), dtype=np.float32)
+        applied_np = self._actions_to_numpy(applied_action_tensors)
         np.save(run_dir / "actions_returned.npy", actions_np)
-        np.save(run_dir / "actions_applied.npy", actions_np)
+        np.save(run_dir / "actions_applied.npy", applied_np)
         with open(run_dir / "actions_applied.json", "w", encoding="utf-8") as f:
             json.dump([self._to_jsonable(action) for action in performed_actions], f, indent=2)
 
@@ -282,6 +311,8 @@ class MimicVideoRobotClient(RobotClient):
             "actions_per_chunk": self.config.actions_per_chunk,
             "fps": self.config.fps,
             "environment_dt": self.config.environment_dt,
+            "sync_ewa_alpha": self.config.sync_ewa_alpha,
+            "sync_ewa_enabled": self.config.sync_ewa_alpha < 1.0,
             "returned_action_count": len(timed_actions),
             "applied_action_count": len(performed_actions),
             "first_action_timestep": timed_actions[0].get_timestep() if timed_actions else None,
@@ -294,6 +325,16 @@ class MimicVideoRobotClient(RobotClient):
         }
         with open(run_dir / "metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
+
+    @staticmethod
+    def _actions_to_numpy(actions: list[Any]) -> np.ndarray:
+        action_arrays = []
+        for action in actions:
+            if hasattr(action, "detach"):
+                action_arrays.append(action.detach().float().cpu().numpy())
+            else:
+                action_arrays.append(np.asarray(action, dtype=np.float32))
+        return np.stack(action_arrays, axis=0) if action_arrays else np.empty((0,), dtype=np.float32)
 
     @staticmethod
     def _to_jsonable(value: Any) -> Any:
